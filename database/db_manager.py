@@ -9,8 +9,9 @@ class DBManager:
         if db_path is None:
             data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
             os.makedirs(data_dir, exist_ok=True)
-            db_path = os.path.join(data_dir, "database.db")
-        self.db_path = db_path
+            self.db_path = os.path.join(data_dir, "database.db")
+        else:
+            self.db_path = db_path
         self.init_db()
 
     def get_connection(self):
@@ -89,12 +90,14 @@ class DBManager:
                 teacher_id TEXT PRIMARY KEY,
                 user_id INTEGER,
                 name TEXT NOT NULL,
+                gender TEXT,
                 email TEXT,
                 phone TEXT,
                 address TEXT,
                 department TEXT,
                 designation TEXT,
                 joining_date TEXT,
+                teaching_mode TEXT DEFAULT 'School',
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             );
             """)
@@ -231,6 +234,22 @@ class DBManager:
             );
             """)
 
+            # Leave requests table
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS leave_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id TEXT NOT NULL,
+                leave_date TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                teacher_status TEXT DEFAULT 'Pending',
+                admin_status TEXT DEFAULT 'Pending',
+                final_status TEXT DEFAULT 'Pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE,
+                UNIQUE(student_id, leave_date)
+            );
+            """)
+
             conn.commit()
 
             # Safe column migration for existing databases
@@ -248,7 +267,8 @@ class DBManager:
                 ("guardian_name", "TEXT")
             ])
             self._migrate_table_columns(conn, "teachers", [
-                ("address", "TEXT"), ("joining_date", "TEXT"), ("monthly_salary", "REAL DEFAULT 35000.0")
+                ("gender", "TEXT"), ("address", "TEXT"), ("joining_date", "TEXT"), ("monthly_salary", "REAL DEFAULT 35000.0"),
+                ("teaching_mode", "TEXT DEFAULT 'School'")
             ])
             self._migrate_table_columns(conn, "parents", [
                 ("parent_id_code", "TEXT"), ("mother_name", "TEXT"), ("mother_phone", "TEXT")
@@ -271,7 +291,13 @@ class DBManager:
                 ("start_time", "TEXT"),
                 ("end_time", "TEXT"),
                 ("total_work_seconds", "INTEGER DEFAULT 0"),
-                ("session_status", "TEXT DEFAULT 'NOT_STARTED'")
+                ("session_status", "TEXT DEFAULT 'NOT_STARTED'"),
+                ("salary_eligible", "TEXT DEFAULT 'YES'"),
+                ("salary_month", "INTEGER"),
+                ("salary_year", "INTEGER")
+            ])
+            self._migrate_table_columns(conn, "attendance", [
+                ("source", "TEXT DEFAULT 'Student'")
             ])
             try:
                 cursor.execute("UPDATE teacher_work_logs SET work_date = date WHERE work_date IS NULL AND date IS NOT NULL;")
@@ -420,19 +446,95 @@ class DBManager:
         """Authenticate user credentials with failed attempt rate limiting. Returns dict with status or user_data."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (username.strip(),))
-            user = cursor.fetchone()
-            if not user:
-                cursor.execute("""
-                    SELECT u.* FROM users u
-                    JOIN students s ON u.id = s.user_id
-                    WHERE (s.student_id IS NOT NULL AND LOWER(s.student_id) = LOWER(?))
-                       OR (s.enrollment_number IS NOT NULL AND LOWER(s.enrollment_number) = LOWER(?))
-                """, (username.strip(), username.strip()))
+            u_clean = username.strip()
+
+            user = None
+            if expected_role == "Parent":
+                # 1. Direct username lookup for Parent role
+                cursor.execute("SELECT * FROM users WHERE role = 'Parent' AND LOWER(username) = LOWER(?)", (u_clean,))
                 user = cursor.fetchone()
 
+                # 2. Lookup via parents table (by email, parent_id_code, phone, or name)
+                if not user:
+                    cursor.execute("""
+                        SELECT * FROM parents
+                        WHERE LOWER(email) = LOWER(?)
+                           OR LOWER(parent_id_code) = LOWER(?)
+                           OR LOWER(name) = LOWER(?)
+                           OR phone = ?
+                        LIMIT 1
+                    """, (u_clean, u_clean, u_clean, u_clean))
+                    p_rec = cursor.fetchone()
+
+                    if p_rec:
+                        p_dict = dict(p_rec)
+                        if p_dict.get('user_id'):
+                            cursor.execute("SELECT * FROM users WHERE id = ? AND role = 'Parent'", (p_dict['user_id'],))
+                            user = cursor.fetchone()
+
+                        if not user:
+                            # Try finding matching user with role = 'Parent'
+                            p_email = p_dict.get('email') or ''
+                            p_code = p_dict.get('parent_id_code') or ''
+                            p_name = p_dict.get('name') or ''
+                            p_phone = p_dict.get('phone') or ''
+                            cursor.execute("""
+                                SELECT * FROM users
+                                WHERE role = 'Parent' AND (
+                                    LOWER(username) = LOWER(?)
+                                    OR (LOWER(username) = LOWER(?) AND ? != '')
+                                    OR (LOWER(username) = LOWER(?) AND ? != '')
+                                    OR (LOWER(username) = LOWER(?) AND ? != '')
+                                    OR (LOWER(username) = LOWER(?) AND ? != '')
+                                ) LIMIT 1
+                            """, (u_clean, p_email, p_email, p_code, p_code, p_name, p_name, p_phone, p_phone))
+                            u_match = cursor.fetchone()
+                            if u_match:
+                                user = u_match
+                                cursor.execute("UPDATE parents SET user_id = ? WHERE id = ?", (u_match['id'], p_dict['id']))
+                                conn.commit()
+
+                # 3. Direct users table search fallback
+                if not user:
+                    cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (u_clean,))
+                    user = cursor.fetchone()
+
+            else:
+                # Standard lookup for Admin, Teacher, Student
+                cursor.execute("SELECT * FROM users WHERE LOWER(username) = LOWER(?)", (u_clean,))
+                user = cursor.fetchone()
+
+                if not user and (not expected_role or expected_role == "Student"):
+                    cursor.execute("""
+                        SELECT u.* FROM users u
+                        JOIN students s ON u.id = s.user_id
+                        WHERE (s.student_id IS NOT NULL AND LOWER(s.student_id) = LOWER(?))
+                           OR (s.enrollment_number IS NOT NULL AND LOWER(s.enrollment_number) = LOWER(?))
+                           OR (s.email IS NOT NULL AND LOWER(s.email) = LOWER(?))
+                        LIMIT 1
+                    """, (u_clean, u_clean, u_clean))
+                    user = cursor.fetchone()
+
+                if not user and (not expected_role or expected_role == "Teacher"):
+                    cursor.execute("""
+                        SELECT u.* FROM users u
+                        JOIN teachers t ON u.id = t.user_id
+                        WHERE (t.teacher_id IS NOT NULL AND LOWER(t.teacher_id) = LOWER(?))
+                           OR (t.email IS NOT NULL AND LOWER(t.email) = LOWER(?))
+                        LIMIT 1
+                    """, (u_clean, u_clean))
+                    user = cursor.fetchone()
+
             if not user:
-                return {"success": False, "error_type": "invalid_user", "message": f"Account with User ID / Enrollment Number '{username.strip()}' does not exist."}
+                if expected_role == "Parent":
+                    msg = f"Account with Parent Email / Username '{u_clean}' does not exist."
+                elif expected_role == "Student":
+                    msg = f"Account with Student ID / Enrollment Number '{u_clean}' does not exist."
+                elif expected_role == "Teacher":
+                    msg = f"Account with Teacher ID / Username '{u_clean}' does not exist."
+                else:
+                    msg = f"Account with Username '{u_clean}' does not exist."
+                return {"success": False, "error_type": "invalid_user", "message": msg}
             
             if expected_role and user['role'] != expected_role:
                 return {"success": False, "error_type": "invalid_role", "message": f"Account is registered under '{user['role']}' role, not '{expected_role}'."}
@@ -488,20 +590,37 @@ class DBManager:
             user = cursor.fetchone()
 
             if not user:
-                query = """
-                    SELECT u.* FROM users u
-                    JOIN students s ON u.id = s.user_id
-                    WHERE (
-                        (s.student_id IS NOT NULL AND TRIM(LOWER(s.student_id)) = TRIM(LOWER(?)))
-                        OR (s.enrollment_number IS NOT NULL AND TRIM(LOWER(s.enrollment_number)) = TRIM(LOWER(?)))
-                    )
-                """
-                params = [ident_clean, ident_clean]
-                if role:
-                    query += " AND u.role = ?"
-                    params.append(role)
-                cursor.execute(query, params)
-                user = cursor.fetchone()
+                if not role or role == "Student":
+                    query = """
+                        SELECT u.* FROM users u
+                        JOIN students s ON u.id = s.user_id
+                        WHERE (
+                            (s.student_id IS NOT NULL AND TRIM(LOWER(s.student_id)) = TRIM(LOWER(?)))
+                            OR (s.enrollment_number IS NOT NULL AND TRIM(LOWER(s.enrollment_number)) = TRIM(LOWER(?)))
+                        )
+                    """
+                    params = [ident_clean, ident_clean]
+                    if role:
+                        query += " AND u.role = ?"
+                        params.append(role)
+                    cursor.execute(query, params)
+                    user = cursor.fetchone()
+
+            if not user:
+                if not role or role == "Parent":
+                    query = """
+                        SELECT u.* FROM users u
+                        JOIN parents p ON u.id = p.user_id
+                        WHERE (p.parent_id_code IS NOT NULL AND TRIM(LOWER(p.parent_id_code)) = TRIM(LOWER(?)))
+                           OR (p.phone IS NOT NULL AND p.phone = ?)
+                           OR (p.email IS NOT NULL AND TRIM(LOWER(p.email)) = TRIM(LOWER(?)))
+                    """
+                    params = [ident_clean, ident_clean, ident_clean]
+                    if role:
+                        query += " AND u.role = ?"
+                        params.append(role)
+                    cursor.execute(query, params)
+                    user = cursor.fetchone()
 
             # 2. Registered email lookup from students/teachers/parents tables if not matched by username
             if not user:
@@ -519,7 +638,7 @@ class DBManager:
                 user = cursor.fetchone()
 
             if not user:
-                return False, "User ID or registered email not found."
+                return False, "Username or registered email not found."
 
             user_dict = dict(user)
             stored_fav_hash = user_dict.get('favourite_person_hash')
@@ -825,14 +944,16 @@ class DBManager:
             return deleted
 
     def _format_student_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
-        """Helper to format student dictionary and ensure school_name and college_name fallbacks."""
+        """Helper to format student dictionary and ensure school_name and department fallbacks."""
         if not d:
             return d
         res = dict(d)
-        sch_name = res.get('school_name') or res.get('previous_school') or ''
+        sch_name = res.get('school_name') or res.get('previous_school') or res.get('college_name') or ''
         col_name = res.get('college_name') or res.get('school_name') or res.get('previous_school') or ''
         res['school_name'] = sch_name
         res['college_name'] = col_name
+        if not res.get('department') and res.get('course'):
+            res['department'] = res.get('course')
         return res
 
     def get_student(self, student_id: str) -> Optional[Dict[str, Any]]:
@@ -874,9 +995,9 @@ class DBManager:
                 params.append(filter_course)
             if filter_edu_type and filter_edu_type != "All":
                 if filter_edu_type == "School":
-                    query += " AND (LOWER(education_type) = 'school' OR (education_type IS NULL AND (course IS NULL OR course = '')))"
+                    query += " AND TRIM(LOWER(education_type)) = 'school'"
                 elif filter_edu_type == "College":
-                    query += " AND (LOWER(education_type) = 'college' OR (course IS NOT NULL AND course != '') OR (enrollment_number IS NOT NULL AND enrollment_number != ''))"
+                    query += " AND TRIM(LOWER(education_type)) = 'college'"
             
             query += " ORDER BY name ASC"
             cursor.execute(query, params)
@@ -889,19 +1010,21 @@ class DBManager:
             cursor = conn.cursor()
             try:
                 cursor.execute("""
-                    INSERT INTO teachers (teacher_id, user_id, name, phone, email, address, department, designation, joining_date, monthly_salary)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO teachers (teacher_id, user_id, name, gender, phone, email, address, department, designation, joining_date, monthly_salary, teaching_mode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     teacher_data['teacher_id'].strip(),
                     user_id,
                     teacher_data['name'].strip(),
+                    teacher_data.get('gender', 'Male').strip() if teacher_data.get('gender') else 'Male',
                     teacher_data.get('phone', '').strip(),
                     teacher_data.get('email', '').strip(),
                     teacher_data.get('address', '').strip(),
                     teacher_data.get('department', '').strip(),
                     teacher_data.get('designation', '').strip(),
                     teacher_data.get('joining_date', '').strip(),
-                    float(teacher_data.get('monthly_salary', 35000.0))
+                    float(teacher_data.get('monthly_salary', 35000.0)),
+                    teacher_data.get('teaching_mode', 'School').strip()
                 ))
                 conn.commit()
                 return True
@@ -924,10 +1047,11 @@ class DBManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE teachers SET name = ?, phone = ?, email = ?, address = ?, department = ?, designation = ?, joining_date = ?
+                UPDATE teachers SET name = ?, gender = COALESCE(?, gender), phone = ?, email = ?, address = ?, department = ?, designation = ?, joining_date = ?
                 WHERE teacher_id = ?
             """, (
                 teacher_data['name'].strip(),
+                teacher_data.get('gender'),
                 teacher_data.get('phone', '').strip(),
                 teacher_data.get('email', '').strip(),
                 teacher_data.get('address', '').strip(),
@@ -959,8 +1083,8 @@ class DBManager:
             conn.commit()
             return deleted
 
-    def get_all_teachers(self, search_term: str = None) -> List[Dict[str, Any]]:
-        """Fetch all teachers with optional search filtering by ID, name, or email."""
+    def get_all_teachers(self, search_term: str = None, filter_edu_type: str = None) -> List[Dict[str, Any]]:
+        """Fetch all teachers with optional search filtering by ID, name, or email, and education type."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             query = "SELECT * FROM teachers WHERE 1=1"
@@ -969,6 +1093,9 @@ class DBManager:
                 query += " AND (teacher_id LIKE ? OR name LIKE ? OR email LIKE ?)"
                 t = f"%{search_term.strip()}%"
                 params.extend([t, t, t])
+            if filter_edu_type and filter_edu_type != "All":
+                query += " AND (LOWER(teaching_mode) = ? OR (teaching_mode IS NULL AND ? = 'School'))"
+                params.extend([filter_edu_type.lower(), filter_edu_type])
             query += " ORDER BY name ASC"
             cursor.execute(query, params)
             return [dict(r) for r in cursor.fetchall()]
@@ -1100,7 +1227,26 @@ class DBManager:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM parents WHERE user_id = ?", (user_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if row:
+                return dict(row)
+            # Fallback by matching username from users table with parent_id_code, phone, or email
+            cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+            urow = cursor.fetchone()
+            if urow and urow['username']:
+                uname = urow['username'].strip()
+                cursor.execute("""
+                    SELECT * FROM parents
+                    WHERE LOWER(parent_id_code) = LOWER(?)
+                       OR phone = ?
+                       OR LOWER(email) = LOWER(?)
+                    LIMIT 1
+                """, (uname, uname, uname))
+                prow = cursor.fetchone()
+                if prow:
+                    cursor.execute("UPDATE parents SET user_id = ? WHERE id = ?", (user_id, prow['id']))
+                    conn.commit()
+                    return dict(prow)
+            return None
 
     def get_parent_by_student_id(self, student_id: str) -> Optional[Dict[str, Any]]:
         """Get parent record by linked student_id."""
@@ -1166,19 +1312,52 @@ class DBManager:
         """Fetch all student records linked to a parent user_id or parent's phone/email."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            # Get parent phone & email details
-            cursor.execute("SELECT phone, mother_phone, email FROM parents WHERE user_id = ?", (user_id,))
-            p_rec = cursor.fetchone()
-            p_phone = p_rec['phone'] if p_rec and p_rec['phone'] else ''
-            m_phone = p_rec['mother_phone'] if p_rec and p_rec['mother_phone'] else ''
-            p_email = p_rec['email'] if p_rec and p_rec['email'] else ''
-
             cursor.execute("SELECT username FROM users WHERE id = ?", (user_id,))
             u_rec = cursor.fetchone()
-            u_phone = u_rec['username'] if u_rec and u_rec['username'] else ''
+            u_name = u_rec['username'].strip() if u_rec and u_rec['username'] else ''
 
-            phones = list(filter(None, set([p_phone, m_phone, u_phone])))
-            emails = list(filter(None, set([p_email])))
+            cursor.execute("""
+                SELECT id, phone, mother_phone, email, parent_id_code, student_id, name
+                FROM parents
+                WHERE user_id = ?
+                   OR (parent_id_code IS NOT NULL AND LOWER(parent_id_code) = LOWER(?))
+                   OR (phone IS NOT NULL AND phone = ?)
+                   OR (email IS NOT NULL AND LOWER(email) = LOWER(?))
+                   OR (name IS NOT NULL AND LOWER(name) = LOWER(?))
+            """, (user_id, u_name, u_name, u_name, u_name))
+            p_rows = cursor.fetchall()
+            
+            phones = set()
+            emails = set()
+            parent_id_codes = set()
+            direct_student_ids = set()
+
+            if u_name:
+                if "@" in u_name:
+                    emails.add(u_name)
+                elif u_name.isdigit():
+                    phones.add(u_name)
+                else:
+                    parent_id_codes.add(u_name.lower())
+
+            for p_rec in p_rows:
+                cursor.execute("UPDATE parents SET user_id = ? WHERE id = ? AND user_id IS NULL", (user_id, p_rec['id']))
+                if p_rec['phone']:
+                    phones.add(p_rec['phone'])
+                if p_rec['mother_phone']:
+                    phones.add(p_rec['mother_phone'])
+                if p_rec['email']:
+                    emails.add(p_rec['email'])
+                if p_rec['parent_id_code']:
+                    parent_id_codes.add(p_rec['parent_id_code'].lower())
+                if p_rec['student_id']:
+                    direct_student_ids.add(p_rec['student_id'].strip().lower())
+            conn.commit()
+
+            phones_list = list(filter(None, phones))
+            emails_list = list(filter(None, emails))
+            parent_id_codes_list = list(filter(None, parent_id_codes))
+            direct_student_ids_list = list(filter(None, direct_student_ids))
 
             query = """
                 SELECT DISTINCT s.*
@@ -1188,8 +1367,18 @@ class DBManager:
             """
             params = [user_id]
 
-            if phones:
-                ph_placeholders = ",".join(["?"] * len(phones))
+            if direct_student_ids_list:
+                sid_placeholders = ",".join(["?"] * len(direct_student_ids_list))
+                query += f" OR LOWER(s.student_id) IN ({sid_placeholders})"
+                params.extend(direct_student_ids_list)
+
+            if parent_id_codes_list:
+                pid_placeholders = ",".join(["?"] * len(parent_id_codes_list))
+                query += f" OR (s.parent_id_code IS NOT NULL AND LOWER(s.parent_id_code) IN ({pid_placeholders}))"
+                params.extend(parent_id_codes_list)
+
+            if phones_list:
+                ph_placeholders = ",".join(["?"] * len(phones_list))
                 query += f"""
                     OR s.father_phone IN ({ph_placeholders})
                     OR s.mother_phone IN ({ph_placeholders})
@@ -1197,15 +1386,15 @@ class DBManager:
                     OR p.phone IN ({ph_placeholders})
                     OR p.mother_phone IN ({ph_placeholders})
                 """
-                params.extend(phones * 5)
+                params.extend(phones_list * 5)
 
-            if emails:
-                em_placeholders = ",".join(["?"] * len(emails))
+            if emails_list:
+                em_placeholders = ",".join(["?"] * len(emails_list))
                 query += f"""
                     OR s.parent_email IN ({em_placeholders})
                     OR p.email IN ({em_placeholders})
                 """
-                params.extend(emails * 2)
+                params.extend(emails_list * 2)
 
             query += " ORDER BY s.name ASC"
             cursor.execute(query, params)
@@ -1267,28 +1456,45 @@ class DBManager:
 
 
     # --- ATTENDANCE METHODS ---
-    def mark_attendance(self, student_id: str, date_str: str, time_str: str, status: str = 'Present') -> tuple[bool, str]:
+    def mark_attendance(self, student_id: str, date_str: str, time_str: str, status: str = 'Present', source: str = 'Student') -> tuple[bool, str]:
         """Mark or update student attendance for date. Returns (success, message)."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             sid_clean = str(student_id).strip()
             try:
                 cursor.execute(
-                    "SELECT id FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) AND date = ?",
+                    "SELECT id, status, source FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) AND date = ?",
                     (sid_clean, date_str)
                 )
                 row = cursor.fetchone()
                 if row:
+                    existing_source = 'Student'
+                    try:
+                        existing_source = row['source']
+                    except Exception:
+                        pass
+
+                    if source == 'Student':
+                        if existing_source == 'Teacher':
+                            return False, "Attendance is already marked by teacher."
+                        elif existing_source == 'Student':
+                            return False, "Your attendance is already marked."
+                    elif source == 'Teacher':
+                        if existing_source == 'Student':
+                            return False, "Attendance is already marked by student."
+                        elif existing_source == 'Teacher':
+                            return False, "Attendance is already marked."
+
                     cursor.execute(
-                        "UPDATE attendance SET status = ?, time = ? WHERE id = ?",
-                        (status, time_str, row['id'])
+                        "UPDATE attendance SET status = ?, time = ?, source = ? WHERE id = ?",
+                        (status, time_str, source, row['id'])
                     )
                     conn.commit()
                     return True, f"Attendance updated to '{status}' for {sid_clean}."
                 else:
                     cursor.execute(
-                        "INSERT INTO attendance (student_id, date, time, status) VALUES (?, ?, ?, ?)",
-                        (sid_clean, date_str, time_str, status)
+                        "INSERT INTO attendance (student_id, date, time, status, source) VALUES (?, ?, ?, ?, ?)",
+                        (sid_clean, date_str, time_str, status, source)
                     )
                     conn.commit()
                     
@@ -1325,16 +1531,16 @@ class DBManager:
         """Get attendance log for student."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM attendance WHERE student_id = ? ORDER BY date DESC, time DESC", (student_id,))
+            cursor.execute("SELECT * FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) ORDER BY date DESC, time DESC", (student_id,))
             return [dict(r) for r in cursor.fetchall()]
 
     def get_student_attendance_stats(self, student_id: str) -> Dict[str, Any]:
         """Calculate attendance stats for a student."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) as total FROM attendance WHERE student_id = ?", (student_id,))
+            cursor.execute("SELECT COUNT(*) as total FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?))", (student_id,))
             total = cursor.fetchone()['total']
-            cursor.execute("SELECT COUNT(*) as present FROM attendance WHERE student_id = ? AND status = 'Present'", (student_id,))
+            cursor.execute("SELECT COUNT(*) as present FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) AND status = 'Present'", (student_id,))
             present = cursor.fetchone()['present']
             absent = total - present
             pct = round((present / total * 100.0), 2) if total > 0 else 0.0
@@ -1578,6 +1784,9 @@ class DBManager:
                     "face_verified": 1
                 }
             else:
+                existing_start = clean_val(existing.get('start_time') or existing.get('actual_start_time') or existing.get('check_in_time'))
+                if existing_start:
+                    return existing
                 cursor.execute("""
                     UPDATE teacher_work_logs SET
                         work_date = ?,
@@ -1692,57 +1901,281 @@ class DBManager:
                     pass
             return None
 
-    def get_teacher_salary_summary(self, teacher_id: str, base_salary: float = None) -> Dict[str, Any]:
+    def get_teacher_salary_summary(self, teacher_id: str, base_salary: float = None, month: int = None, year: int = None) -> Dict[str, Any]:
         """Calculate complete monthly salary summary based on actual attendance & work hours."""
+        import datetime
+        import calendar
+        from utils.helpers import parse_datetime_helper
+
         teacher = self.get_teacher(teacher_id)
         tname = teacher['name'] if teacher else teacher_id
         tdept = teacher.get('department', 'General') if teacher else 'General'
 
         if base_salary is None:
             base_salary = float(teacher.get('monthly_salary', 35000.0)) if teacher else 35000.0
+        else:
+            base_salary = float(base_salary)
 
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        today_date = datetime.date.today()
+        if month is None:
+            month = today_date.month
+        if year is None:
+            year = today_date.year
 
-            # Present Days
-            cursor.execute("SELECT COUNT(*) as present_days FROM teacher_attendance WHERE teacher_id = ? AND status = 'Present'", (teacher_id,))
-            present_days = cursor.fetchone()['present_days']
+        num_days = calendar.monthrange(year, month)[1]
+        daily_rate = base_salary / num_days
 
-            # Total Working Hours, Late Summary & Deductions
-            cursor.execute("""
-                SELECT SUM(working_hours) as total_hrs, SUM(late_minutes) as total_late, SUM(salary_deduction) as total_ded
-                FROM teacher_work_logs WHERE teacher_id = ?
-            """, (teacher_id,))
-            row_hrs = cursor.fetchone()
-            total_hours = float(row_hrs['total_hrs'] or 0.0)
-            total_late = int(row_hrs['total_late'] or 0)
-            late_deduction = float(row_hrs['total_ded'] or 0.0)
+        is_future_month = (year > today_date.year) or (year == today_date.year and month > today_date.month)
+        is_current_month = (year == today_date.year and month == today_date.month)
 
-            working_days = 26
-            daily_rate = round(base_salary / working_days, 2)
-            earned_base = round(daily_rate * present_days, 2)
-
-            expected_hours = present_days * 5.0
-            overtime_hours = round(max(0.0, total_hours - expected_hours), 2)
-            hourly_rate = round(daily_rate / 5.0, 2)
-            overtime_amount = round(overtime_hours * hourly_rate * 1.5, 2)
-            total_salary = round(earned_base + overtime_amount - late_deduction, 2)
-
+        if is_future_month:
             return {
                 "teacher_id": teacher_id,
                 "teacher_name": tname,
                 "department": tdept,
-                "present_days": present_days,
-                "working_days": working_days,
-                "total_working_hours": total_hours,
-                "late_summary_mins": total_late,
-                "late_deduction": late_deduction,
-                "overtime_hours": overtime_hours,
+                "present_days": 0,
+                "absent_days": 0,
+                "not_joined_days": 0,
+                "paid_sundays": 0,
+                "paid_holidays": 0,
+                "working_days": num_days,
+                "total_working_hours_formatted": "00:00:00",
+                "total_working_hours": 0.0,
+                "total_working_minutes": 0,
+                "late_summary_mins": 0,
+                "late_deduction": 0.0,
+                "absent_deduction": 0.0,
+                "not_joined_deduction": 0.0,
+                "overtime_hours": 0.0,
                 "base_salary": base_salary,
-                "earned_base_salary": earned_base,
-                "overtime_amount": overtime_amount,
-                "total_salary": total_salary
+                "earned_base_salary": 0.0,
+                "overtime_amount": 0.0,
+                "total_salary": 0.0,
+                "day_wise_records": [],
+                "is_future_month": True,
+                "is_current_month": False,
+                "remaining_days": num_days
             }
+
+        joining_date_str = teacher.get('joining_date') if teacher else None
+        joining_date = None
+        if joining_date_str:
+            for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+                try:
+                    joining_date = datetime.datetime.strptime(joining_date_str.strip(), fmt).date()
+                    break
+                except ValueError:
+                    pass
+        if not joining_date:
+            joining_date = datetime.date(2000, 1, 1)
+
+        # Fetch holidays
+        holidays_list = self.get_all_holidays()
+        holiday_dates = set()
+        for h in holidays_list:
+            h_date_str = h.get('date')
+            if h_date_str:
+                for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+                    try:
+                        h_date = datetime.datetime.strptime(h_date_str.strip(), fmt).date()
+                        holiday_dates.add(h_date)
+                        break
+                    except ValueError:
+                        pass
+
+        # Fetch attendance records
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM teacher_attendance WHERE teacher_id = ?", (teacher_id,))
+            att_rows = cursor.fetchall()
+            
+            attendance_by_date = {}
+            for row in att_rows:
+                r_date_str = row['date']
+                if r_date_str:
+                    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+                        try:
+                            r_date = datetime.datetime.strptime(r_date_str.strip(), fmt).date()
+                            attendance_by_date[r_date] = row['status']
+                            break
+                        except ValueError:
+                            pass
+
+            # Fetch work logs
+            cursor.execute("SELECT * FROM teacher_work_logs WHERE teacher_id = ?", (teacher_id,))
+            log_rows = cursor.fetchall()
+            
+            work_logs_by_date = {}
+            for row in log_rows:
+                r_date_str = row['date'] or row['work_date']
+                if r_date_str:
+                    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+                        try:
+                            r_date = datetime.datetime.strptime(r_date_str.strip(), fmt).date()
+                            work_logs_by_date[r_date] = dict(row)
+                            break
+                        except ValueError:
+                            pass
+
+        present_days = 0
+        absent_days = 0
+        not_joined_days = 0
+        paid_sundays = 0
+        paid_holidays = 0
+        
+        total_seconds = 0
+        total_late_minutes = 0
+        
+        day_wise_records = []
+
+        # Determine loop end day
+        if is_current_month:
+            end_day = today_date.day
+            remaining_days = num_days - today_date.day
+        else:
+            end_day = num_days
+            remaining_days = 0
+
+        for d in range(1, end_day + 1):
+            curr_date = datetime.date(year, month, d)
+            date_display = curr_date.strftime("%d %b")
+            day_name = curr_date.strftime("%A")
+            
+            start_time_disp = "--"
+            end_time_disp = "--"
+            working_time_disp = "--"
+            late_mins_disp = 0
+            
+            if curr_date < joining_date:
+                status = "Not Joined"
+                not_joined_days += 1
+            else:
+                is_sunday = (curr_date.weekday() == 6)
+                is_holiday = (curr_date in holiday_dates)
+                
+                if is_holiday:
+                    status = "Government Holiday - Paid"
+                    paid_holidays += 1
+                elif is_sunday:
+                    status = "Sunday - Paid"
+                    paid_sundays += 1
+                else:
+                    # Normal working day
+                    att_status = attendance_by_date.get(curr_date)
+                    work_log = work_logs_by_date.get(curr_date)
+                    
+                    astart = None
+                    aend = None
+                    if work_log:
+                        astart = work_log.get('start_time') or work_log.get('actual_start_time') or work_log.get('check_in_time')
+                        aend = work_log.get('end_time') or work_log.get('actual_end_time') or work_log.get('check_out_time')
+                    
+                    # Clean values
+                    def clean_t(t):
+                        if not t or str(t).strip() in ("", "--", "None", "NULL"):
+                            return None
+                        return str(t).strip()
+                    
+                    astart = clean_t(astart)
+                    aend = clean_t(aend)
+                    
+                    if astart:
+                        t_in = parse_datetime_helper(astart, curr_date.strftime("%Y-%m-%d"))
+                        school_start_time = datetime.datetime.combine(curr_date, datetime.time(7, 30))
+                        school_end_time = datetime.datetime.combine(curr_date, datetime.time(12, 30))
+                        
+                        if t_in and t_in > school_end_time:
+                            # School time over login
+                            status = "School Time Over - Not Included"
+                            absent_days += 1
+                            start_time_disp = astart
+                            end_time_disp = aend if aend else "--"
+                        else:
+                            # Valid login
+                            status = "Present"
+                            present_days += 1
+                            start_time_disp = astart
+                            end_time_disp = aend if aend else "--"
+                            
+                            # Late minutes calculation
+                            if t_in and t_in > school_start_time:
+                                late_mins_disp = int((t_in - school_start_time).total_seconds() // 60)
+                                total_late_minutes += late_mins_disp
+                            
+                            # Working seconds calculation
+                            if aend:
+                                t_out = parse_datetime_helper(aend, curr_date.strftime("%Y-%m-%d"))
+                                if t_in and t_out:
+                                    diff_secs = int((t_out - t_in).total_seconds())
+                                    if diff_secs < 0:
+                                        diff_secs += 86400
+                                    total_seconds += diff_secs
+                                    
+                                    hrs = diff_secs // 3600
+                                    mins = (diff_secs % 3600) // 60
+                                    secs = diff_secs % 60
+                                    working_time_disp = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+                    elif att_status == "Present":
+                        # Present in attendance but no start time logged in work log
+                        status = "Present"
+                        present_days += 1
+                    else:
+                        status = "Absent"
+                        absent_days += 1
+            
+            day_wise_records.append({
+                "date": date_display,
+                "day": day_name,
+                "attendance": status,
+                "start_time": start_time_disp,
+                "end_time": end_time_disp,
+                "working_time": working_time_disp,
+                "late_minutes": late_mins_disp
+            })
+
+        total_hours_formatted = "00:00:00"
+        total_working_minutes = 0
+        if total_seconds > 0:
+            hrs = total_seconds // 3600
+            mins = (total_seconds % 3600) // 60
+            secs = total_seconds % 60
+            total_hours_formatted = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+            total_working_minutes = total_seconds // 60
+            
+        per_minute_salary = (base_salary / num_days) / 300.0
+        late_deduction = round(total_late_minutes * per_minute_salary, 2)
+        absent_deduction = round(absent_days * daily_rate, 2)
+        not_joined_deduction = round(not_joined_days * daily_rate, 2)
+        
+        net_salary = round(max(0.0, base_salary - absent_deduction - late_deduction - not_joined_deduction), 2)
+
+        return {
+            "teacher_id": teacher_id,
+            "teacher_name": tname,
+            "department": tdept,
+            "present_days": present_days,
+            "absent_days": absent_days,
+            "not_joined_days": not_joined_days,
+            "paid_sundays": paid_sundays,
+            "paid_holidays": paid_holidays,
+            "working_days": num_days,
+            "total_working_hours_formatted": total_hours_formatted,
+            "total_working_hours": total_seconds / 3600.0,
+            "total_working_minutes": total_working_minutes,
+            "late_summary_mins": total_late_minutes,
+            "late_deduction": late_deduction,
+            "absent_deduction": absent_deduction,
+            "not_joined_deduction": not_joined_deduction,
+            "overtime_hours": 0.0,
+            "base_salary": base_salary,
+            "earned_base_salary": round(present_days * daily_rate, 2),
+            "overtime_amount": 0.0,
+            "total_salary": net_salary,
+            "day_wise_records": day_wise_records,
+            "is_current_month": is_current_month,
+            "is_future_month": False,
+            "remaining_days": remaining_days
+        }
 
     def get_all_teachers_salary_summary(self) -> List[Dict[str, Any]]:
         """Calculate salary summary for all registered teachers."""
@@ -1923,6 +2356,7 @@ class DBManager:
         """Store face encoding vector bytes for a student or teacher ID."""
         from utils.helpers import get_current_date, get_current_time
         now_str = f"{get_current_date()} {get_current_time()}"
+        sid_clean = str(student_id).strip()
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("PRAGMA foreign_keys = OFF;")
@@ -1932,9 +2366,20 @@ class DBManager:
                 ON CONFLICT(student_id) DO UPDATE SET
                     encoding_blob = excluded.encoding_blob,
                     updated_at = excluded.updated_at
-            """, (student_id, encoding_bytes, now_str))
+            """, (sid_clean, encoding_bytes, now_str))
             conn.commit()
             return True
+
+    def get_face_encoding(self, user_id: str) -> Optional[bytes]:
+        """Fetch face encoding blob for a student or teacher ID."""
+        if not user_id:
+            return None
+        sid_clean = str(user_id).strip()
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT encoding_blob FROM face_data WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?))", (sid_clean,))
+            row = cursor.fetchone()
+            return row['encoding_blob'] if row else None
 
     def get_all_face_encodings(self) -> List[Dict[str, Any]]:
         """Retrieve all stored face encodings."""
@@ -2128,3 +2573,106 @@ class DBManager:
             cursor.execute("SELECT * FROM activities ORDER BY date ASC")
             return [dict(r) for r in cursor.fetchall()]
 
+    def add_leave_request(self, student_id: str, leave_date: str, reason: str) -> bool:
+        """Submit a leave request for a student."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "INSERT INTO leave_requests (student_id, leave_date, reason) VALUES (?, ?, ?)",
+                    (student_id.strip(), leave_date.strip(), reason.strip())
+                )
+                conn.commit()
+                return True
+            except sqlite3.Error:
+                return False
+
+    def get_student_leave_requests(self, student_id: str) -> List[Dict[str, Any]]:
+        """Fetch leave requests for a single student."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM leave_requests WHERE student_id = ? ORDER BY leave_date DESC",
+                (student_id,)
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def get_all_leave_requests(self) -> List[Dict[str, Any]]:
+        """Fetch all leave requests joined with student details."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT lr.*, s.name as student_name 
+                FROM leave_requests lr
+                JOIN students s ON lr.student_id = s.student_id
+                ORDER BY lr.leave_date DESC
+            """)
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_leave_request_status(self, request_id: int, role: str, status: str) -> bool:
+        """Update leave request status for Teacher or Admin role, and compute final status."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                # 1. Fetch current status
+                cursor.execute("SELECT * FROM leave_requests WHERE id = ?", (request_id,))
+                row = cursor.fetchone()
+                if not row:
+                    return False
+                
+                teacher_status = row['teacher_status']
+                admin_status = row['admin_status']
+                student_id = row['student_id']
+                leave_date = row['leave_date']
+                
+                # 2. Update status for the role (Only Teacher has decision power now)
+                if role == 'Teacher':
+                    teacher_status = status
+                    
+                # 3. Apply decision logic: ONLY TEACHER DECIDES!
+                if teacher_status == 'Accept':
+                    final_status = 'Approved'
+                elif teacher_status == 'Reject':
+                    final_status = 'Rejected'
+                else:
+                    final_status = 'Pending'
+                    
+                # 4. Save updates
+                cursor.execute("""
+                    UPDATE leave_requests 
+                    SET teacher_status = ?, admin_status = ?, final_status = ?
+                    WHERE id = ?
+                """, (teacher_status, admin_status, final_status, request_id))
+                
+                # 5. If final_status is 'Approved', mark attendance as 'Leave'
+                if final_status == 'Approved':
+                    # Check if attendance already exists
+                    cursor.execute(
+                        "SELECT id FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) AND date = ?",
+                        (student_id.strip(), leave_date)
+                    )
+                    att_row = cursor.fetchone()
+                    if att_row:
+                        cursor.execute(
+                            "UPDATE attendance SET status = 'Leave', time = '00:00:00', source = 'Teacher' WHERE id = ?",
+                            (att_row['id'],)
+                        )
+                    else:
+                        cursor.execute(
+                            "INSERT INTO attendance (student_id, date, time, status, source) VALUES (?, ?, '00:00:00', 'Leave', 'Teacher')",
+                            (student_id.strip(), leave_date)
+                        )
+                elif final_status == 'Rejected':
+                    # If there was a 'Leave' attendance marked by Teacher, revert/delete it
+                    cursor.execute(
+                        "DELETE FROM attendance WHERE TRIM(LOWER(student_id)) = TRIM(LOWER(?)) AND date = ? AND status = 'Leave' AND source = 'Teacher'",
+                        (student_id.strip(), leave_date)
+                    )
+                conn.commit()
+                return True
+            except sqlite3.Error as e:
+                print("Error updating leave request status:", e)
+                return False
+
+# Alias for backward compatibility
+DatabaseManager = DBManager

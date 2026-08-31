@@ -124,6 +124,12 @@ class LoginWindow(tk.Toplevel):
             if self.role == "Student":
                 self.lbl_username.config(text="Student ID / Enrollment Number *:")
                 self.lbl_hint.config(text="School students enter Student ID. College students enter Enrollment Number.")
+            elif self.role == "Parent":
+                self.lbl_username.config(text="Parent Email / Username / Login ID *:")
+                self.lbl_hint.config(text="Enter your registered Parent Email, Username, or Parent ID.")
+            elif self.role == "Teacher":
+                self.lbl_username.config(text="Teacher ID / Username *:")
+                self.lbl_hint.config(text="")
             else:
                 self.lbl_username.config(text="Username / Login ID *:")
                 self.lbl_hint.config(text="")

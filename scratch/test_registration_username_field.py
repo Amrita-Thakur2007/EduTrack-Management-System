@@ -85,6 +85,12 @@ def run_tests():
     reg_window._entries["admission_date"].insert(0, "2024-04-01")
     reg_window._entries["student_id"].insert(0, "STU_SCH_101")
 
+    # Register face
+    import pickle, numpy as np
+    dummy_face = np.random.uniform(0, 1, (100, 100)).astype(np.float32)
+    db.save_face_encoding("STU_SCH_101", pickle.dumps(dummy_face))
+    reg_window.student_face_registered = True
+
     reg_window.do_register()
 
     assert len(last_info) > 0, f"Registration failed! Warnings/Errors: {last_warning} {last_error}"

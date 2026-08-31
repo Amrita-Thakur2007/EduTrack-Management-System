@@ -159,6 +159,8 @@ class AccountRegistrationWindow(tk.Toplevel):
         self.grab_set()
 
         self._entries = {}
+        self.teacher_face_registered = False
+        self.student_face_registered = False
         self.child_entries = [] # for Parent multi-child entries
         self._build_ui()
 
@@ -217,7 +219,8 @@ class AccountRegistrationWindow(tk.Toplevel):
             note_lbl.pack(anchor=tk.W, pady=(1, 3))
 
         if is_combo:
-            widget = ttk.Combobox(row_frame, values=combo_vals or [], state="readonly")
+            combo_state = "normal" if key_name in ["relationship", "course"] else "readonly"
+            widget = ttk.Combobox(row_frame, values=combo_vals or [], state=combo_state)
             if combo_vals:
                 widget.set(default_val or combo_vals[0])
             widget.pack(fill=tk.X, pady=(2, 0))
@@ -267,12 +270,93 @@ class AccountRegistrationWindow(tk.Toplevel):
         ttk.Label(f, text="PERSONAL & PROFESSIONAL DETAILS", font=FONTS["h3"], foreground=COLORS["primary"]).pack(anchor=tk.W, pady=(15, 5))
         self._add_field(f, "Teacher ID (Unique) *:", "teacher_id")
         self._add_field(f, "Full Name *:", "name")
+        self._add_field(f, "Gender *:", "gender", is_combo=True, combo_vals=["Male", "Female", "Other"])
         self._add_field(f, "Phone Number *:", "phone")
         self._add_field(f, "Email Address *:", "email")
         self._add_field(f, "Address:", "address")
         self._add_field(f, "Department *:", "department", default_val="Computer Science & Engineering")
         self._add_field(f, "Designation:", "designation", default_val="Assistant Professor")
         self._add_field(f, "Joining Date (YYYY-MM-DD):", "joining_date", default_val="2024-01-15")
+
+        # Facial Biometrics
+        ttk.Label(f, text="FACIAL BIOMETRICS", font=FONTS["h3"], foreground=COLORS["primary"]).pack(anchor=tk.W, pady=(15, 5))
+        self.btn_register_face = ttk.Button(f, text="REGISTER YOUR FACE", command=self.register_teacher_face)
+        self.btn_register_face.pack(anchor=tk.W, pady=5)
+        self.lbl_face_status = ttk.Label(f, text="Face Status: Not Registered", font=FONTS["body_bold"], foreground="#dc2626")
+        self.lbl_face_status.pack(anchor=tk.W, pady=2)
+
+    def register_teacher_face(self):
+        tid = self._entries["teacher_id"].get().strip()
+        name = self._entries["name"].get().strip()
+        
+        if not tid:
+            messagebox.showwarning("Validation Error", "Please enter Teacher ID first.")
+            return
+        if not name:
+            messagebox.showwarning("Validation Error", "Please enter Full Name first.")
+            return
+            
+        if self.db.is_teacher_id_exists(tid):
+            messagebox.showerror("Duplicate Error", f"Teacher ID '{tid}' already exists in database.")
+            return
+
+        from face_attendance.face_registration import FaceRegisterWindow
+        
+        def on_reg_complete(success):
+            if success:
+                self.teacher_face_registered = True
+                self.lbl_face_status.config(text="Face Status: FACE REGISTERED ✓", foreground="#15803d")
+                self._entries["teacher_id"].config(state="readonly")
+                self._entries["name"].config(state="readonly")
+                
+        FaceRegisterWindow(self, tid, name, self.db, on_complete=on_reg_complete)
+
+    def register_student_face(self):
+        edu_type = self.combo_edu_type.get() if hasattr(self, 'combo_edu_type') else "School"
+        name = self._entries["name"].get().strip()
+        
+        if edu_type == "School":
+            sid = self._entries.get("student_id")
+            sid_val = sid.get().strip() if sid else ""
+            id_name = "Student ID"
+        else:
+            enr = self._entries.get("enrollment_number")
+            sid_val = enr.get().strip() if enr else ""
+            id_name = "Enrollment Number"
+            
+        if not sid_val:
+            messagebox.showwarning("Validation Error", f"Please enter {id_name} first.")
+            return
+        if not name:
+            messagebox.showwarning("Validation Error", "Please enter Full Name first.")
+            return
+            
+        # Check duplicate
+        if edu_type == "School":
+            if self.db.is_student_id_exists(sid_val):
+                messagebox.showerror("Duplicate Error", f"Student ID '{sid_val}' already exists in database.")
+                return
+        else:
+            if self.db.is_enrollment_number_exists(sid_val):
+                messagebox.showerror("Duplicate Error", f"Enrollment Number '{sid_val}' already exists in database.")
+                return
+
+        from face_attendance.face_registration import FaceRegisterWindow
+        
+        def on_reg_complete(success):
+            if success:
+                self.student_face_registered = True
+                self.lbl_face_status_student.config(text="Face Status: FACE REGISTERED ✓", foreground="#15803d")
+                # Lock fields to prevent mismatch
+                if edu_type == "School":
+                    if "student_id" in self._entries:
+                        self._entries["student_id"].config(state="readonly")
+                else:
+                    if "enrollment_number" in self._entries:
+                        self._entries["enrollment_number"].config(state="readonly")
+                self._entries["name"].config(state="readonly")
+                
+        FaceRegisterWindow(self, sid_val, name, self.db, on_complete=on_reg_complete, success_message="Face Registered Successfully")
 
     def _build_student_fields(self):
         f = self.form_frame
@@ -322,8 +406,26 @@ class AccountRegistrationWindow(tk.Toplevel):
         self._add_field(f, "Relationship with Student:", "relationship", is_combo=True, combo_vals=["Father", "Mother", "Guardian"])
         self._add_field(f, "Study Hours Per Day *:", "study_hours", default_val="3.5")
 
+        # Student Facial Biometrics
+        ttk.Label(f, text="FACIAL BIOMETRICS (MANDATORY)", font=FONTS["h3"], foreground=COLORS["primary"]).pack(anchor=tk.W, pady=(15, 5))
+        self.btn_register_face_student = ttk.Button(f, text="📷 REGISTER YOUR FACE", style="Primary.TButton", command=self.register_student_face)
+        self.btn_register_face_student.pack(anchor=tk.W, pady=5)
+        self.lbl_face_status_student = ttk.Label(f, text="Face Status: Not Registered (Mandatory)", font=FONTS["body_bold"], foreground="#dc2626")
+        self.lbl_face_status_student.pack(anchor=tk.W, pady=2)
+
+        self.btn_submit_student_face = ttk.Button(f, text="Submit", style="Primary.TButton", command=self.do_register)
+        self.btn_submit_student_face.pack(anchor=tk.W, pady=(10, 15))
+
     def _on_edu_type_changed(self, event=None):
         edu_type = self.combo_edu_type.get()
+        self.student_face_registered = False
+        if hasattr(self, 'lbl_face_status_student'):
+            self.lbl_face_status_student.config(text="Face Status: Not Registered (Mandatory)", foreground="#dc2626")
+        if "name" in self._entries:
+            try:
+                self._entries["name"].config(state="normal")
+            except Exception:
+                pass
         self._build_dynamic_edu_fields(edu_type)
 
     def _build_dynamic_edu_fields(self, edu_type: str):
@@ -332,34 +434,24 @@ class AccountRegistrationWindow(tk.Toplevel):
             widget.destroy()
 
         # Remove previous keys from self._entries if any
-        dynamic_keys = ["school_name", "college_name", "student_id", "enrollment_number", "current_class", "section", "course", "semester", "year", "admission_date"]
+        dynamic_keys = ["school_name", "college_name", "student_id", "enrollment_number", "current_class", "section", "roll_number", "course", "semester", "year", "admission_date", "department"]
         for key in dynamic_keys:
             if key in self._entries:
                 del self._entries[key]
 
         if edu_type == "School":
             self._add_field(self.edu_dynamic_container, "School Name *:", "school_name")
+            self._add_field(self.edu_dynamic_container, "Department:", "department")
             self._add_field(self.edu_dynamic_container, "Class *:", "current_class", default_val="10")
             self._add_field(self.edu_dynamic_container, "Section:", "section", default_val="A")
+            self._add_field(self.edu_dynamic_container, "Roll Number *:", "roll_number")
             self._add_field(self.edu_dynamic_container, "Admission Date (YYYY-MM-DD) *:", "admission_date", default_val="2024-08-01")
             self._add_field(self.edu_dynamic_container, "Unique Student ID *:", "student_id")
         else: # College
             self._add_field(self.edu_dynamic_container, "College Name *:", "college_name")
+            self._add_field(self.edu_dynamic_container, "Department:", "department")
             self._add_field(self.edu_dynamic_container, "Unique Enrollment Number *:", "enrollment_number")
-
-            # Course / Program with type-your-own support (state="normal")
-            row_course = ttk.Frame(self.edu_dynamic_container)
-            row_course.pack(fill=tk.X, pady=4)
-            ttk.Label(row_course, text="Course / Program *:", font=FONTS["body_bold"]).pack(anchor=tk.W)
-            ttk.Label(row_course, text="Select from list or type your own custom course name.", font=FONTS["small"], foreground="#0284c7").pack(anchor=tk.W, pady=(1, 3))
-            course_vals = [
-                "B.Tech Computer Science", "B.Tech Information Technology", "B.Tech AI & Data Science",
-                "B.Sc Computer Science", "B.Com", "B.A", "B.Sc", "BBA", "BCA", "M.Tech", "MBA", "MCA"
-            ]
-            widget_course = ttk.Combobox(row_course, values=course_vals, state="normal")
-            widget_course.set("B.Tech Computer Science")
-            widget_course.pack(fill=tk.X, pady=(2, 0))
-            self._entries["course"] = widget_course
+            self._add_field(self.edu_dynamic_container, "Course / Program *:", "course")
 
             # Semester and Year - Editable Text Input Fields
             self._add_field(self.edu_dynamic_container, "Semester *:", "semester")
@@ -542,7 +634,15 @@ class AccountRegistrationWindow(tk.Toplevel):
     def reset_fields(self):
         for widget in self._entries.values():
             if isinstance(widget, ttk.Entry):
+                try:
+                    widget.config(state="normal")
+                except Exception:
+                    pass
                 widget.delete(0, tk.END)
+
+        self.student_face_registered = False
+        if hasattr(self, 'lbl_face_status_student'):
+            self.lbl_face_status_student.config(text="Face Status: Not Registered (Mandatory)", foreground="#dc2626")
 
         if hasattr(self, 'child_entries'):
             for slot in self.child_entries:
@@ -596,6 +696,10 @@ class AccountRegistrationWindow(tk.Toplevel):
             return
 
         if self.role == "Teacher":
+            if not getattr(self, "teacher_face_registered", False):
+                messagebox.showwarning("Validation Error", "Please Register Your Face first before completing registration.")
+                return
+
             tid = data.get("teacher_id", "")
             name = data.get("name", "")
             phone = data.get("phone", "")
@@ -616,12 +720,14 @@ class AccountRegistrationWindow(tk.Toplevel):
             ok = self.db.add_teacher({
                 "teacher_id": tid,
                 "name": name,
+                "gender": data.get("gender", "Male").strip() if data.get("gender") else "Male",
                 "phone": phone,
                 "email": data.get("email", ""),
                 "address": data.get("address", ""),
                 "department": data.get("department", ""),
                 "designation": data.get("designation", ""),
-                "joining_date": data.get("joining_date", "")
+                "joining_date": data.get("joining_date", ""),
+                "teaching_mode": data.get("teaching_mode", "School")
             }, user_id)
 
             if ok:
@@ -680,10 +786,11 @@ class AccountRegistrationWindow(tk.Toplevel):
                 school_name = data.get("school_name", "").strip()
                 curr_class = data.get("current_class", "").strip()
                 section = data.get("section", "").strip()
+                roll_no = data.get("roll_number", "").strip()
                 admission_date = data.get("admission_date", "").strip()
 
-                if not sid or not school_name or not curr_class or not admission_date:
-                    messagebox.showwarning("Validation Error", "School Name, Class, Admission Date, and Student ID are required for School students.")
+                if not sid or not school_name or not curr_class or not roll_no or not admission_date:
+                    messagebox.showwarning("Validation Error", "School Name, Class, Section, Roll Number, Admission Date, and Student ID are required for School students.")
                     return
 
                 if self.db.is_student_id_exists(sid):
@@ -724,69 +831,64 @@ class AccountRegistrationWindow(tk.Toplevel):
                 school_name_val = ""
                 curr_class = ""
                 section = ""
-
-            user_id = self.db.create_user(username_to_create, password, "Student", fav_person)
-            if not user_id:
-                messagebox.showerror("Database Error", "Failed to create user login credentials.")
-                return
+                roll_no = ""
 
             mother_name = data.get("mother_name", "").strip()
             parent_email = data.get("parent_email", "").strip()
             guardian_name = data.get("guardian_name", "").strip()
 
-            ok = self.db.add_student({
-                "student_id": student_id_val,
-                "name": name,
-                "father_name": father_name,
-                "mother_name": mother_name,
-                "father_phone": parent_phone,
-                "mother_phone": mother_phone,
-                "parent_phone": parent_phone,
-                "parent_email": parent_email,
-                "guardian_phone": parent_phone,
-                "guardian_email": parent_email,
-                "dob": dob,
-                "gender": gender,
-                "phone": phone,
-                "email": email,
-                "address": address,
-                "course": course_val if edu_type == "College" else "",
-                "current_class": curr_class if edu_type == "School" else "",
-                "section": section if edu_type == "School" else "",
-                "admission_date": admission_date,
-                "academic_year": year if year else data.get("academic_year", "2024-2025"),
-                "study_hours": study_hours,
-                "education_type": edu_type,
-                "school_name": school_name_val if edu_type == "School" else "",
-                "college_name": college_name_val if edu_type == "College" else "",
-                "enrollment_number": enrollment_number_val if edu_type == "College" else "",
-                "semester": semester_val if edu_type == "College" else "",
-                "guardian_name": guardian_name
-            }, user_id)
+            student_pkg = {
+                "student_id_val": student_id_val,
+                "username": username_to_create,
+                "password": password,
+                "fav_person": fav_person,
+                "edu_type": edu_type,
+                "enrollment_number_val": enrollment_number_val,
+                "student_data": {
+                    "student_id": student_id_val,
+                    "name": name,
+                    "father_name": father_name,
+                    "mother_name": mother_name,
+                    "father_phone": parent_phone,
+                    "mother_phone": mother_phone,
+                    "parent_phone": parent_phone,
+                    "parent_email": parent_email,
+                    "guardian_phone": parent_phone,
+                    "guardian_email": parent_email,
+                    "dob": dob,
+                    "gender": gender,
+                    "phone": phone,
+                    "email": email,
+                    "address": address,
+                    "course": course_val if edu_type == "College" else "",
+                    "current_class": curr_class if edu_type == "School" else "",
+                    "section": section if edu_type == "School" else "",
+                    "roll_number": roll_no if edu_type == "School" else "",
+                    "admission_date": admission_date,
+                    "academic_year": year if year else data.get("academic_year", "2024-2025"),
+                    "study_hours": study_hours,
+                    "education_type": edu_type,
+                    "school_name": school_name_val if edu_type == "School" else "",
+                    "department": data.get("department", "").strip(),
+                    "college_name": college_name_val if edu_type == "College" else "",
+                    "enrollment_number": enrollment_number_val if edu_type == "College" else "",
+                    "semester": semester_val if edu_type == "College" else "",
+                    "guardian_name": guardian_name
+                }
+            }
 
-            if ok:
-                if father_name or mother_name or parent_phone or mother_phone or parent_email:
-                    p_name = father_name or mother_name or guardian_name or "Parent/Guardian"
-                    parent_data = {
-                        "student_id": student_id_val,
-                        "name": p_name,
-                        "mother_name": mother_name,
-                        "phone": parent_phone,
-                        "mother_phone": mother_phone,
-                        "email": parent_email,
-                        "occupation": data.get("parent_occupation", ""),
-                        "emergency_contact": emergency_contact,
-                        "relationship": data.get("relationship", "Father"),
-                        "address": address
-                    }
-                    self.db.add_parent(parent_data)
-                    self.db.auto_link_parent_account(student_id_val, parent_phone, parent_email, mother_phone)
+            # Check if mandatory Face Registration is completed in database
+            has_face = getattr(self, "student_face_registered", False) and (self.db.get_face_encoding(student_id_val) is not None)
 
-                id_display = f"Student ID: {student_id_val}" if edu_type == "School" else f"Enrollment Number: {enrollment_number_val}"
-                messagebox.showinfo("Registration Successful", f"Student Account created successfully!\n\nEducation Type: {edu_type}\n{id_display}\n\nYou can now log in immediately.")
-                self._finish_registration(username_to_create)
-            else:
-                messagebox.showerror("Database Error", "Failed to save Student record.")
+            if not has_face:
+                messagebox.showerror(
+                    "Face Registration Required",
+                    "First you doing face register! You must complete face registration before creating your account.\n\nPlease click '📷 REGISTER YOUR FACE' above to register your face first."
+                )
+                return
+
+            # Face is already registered -> proceed to finalize student account creation
+            self._finalize_student_registration(student_pkg)
 
         elif self.role == "Parent":
             pid_code = data.get("parent_id_code", "").strip()
@@ -850,6 +952,39 @@ class AccountRegistrationWindow(tk.Toplevel):
                 self._finish_registration(username)
             else:
                 messagebox.showerror("Database Error", "Failed to save Parent profile.")
+
+    def _finalize_student_registration(self, pkg: dict):
+        student_id_val = pkg["student_id_val"]
+        username_to_create = pkg["username"]
+        password = pkg["password"]
+        fav_person = pkg["fav_person"]
+        edu_type = pkg["edu_type"]
+        enrollment_number_val = pkg["enrollment_number_val"]
+        student_data = pkg["student_data"]
+
+        # Double check that face is registered in database before creating user account
+        if not getattr(self, "student_face_registered", False) or not self.db.get_face_encoding(student_id_val):
+            messagebox.showerror(
+                "Face Registration Required",
+                "First you doing face register! You must complete face registration before creating your account.\n\nPlease click '📷 REGISTER YOUR FACE' to register your face first."
+            )
+            return
+
+        user_id = self.db.create_user(username_to_create, password, "Student", fav_person)
+        if not user_id:
+            messagebox.showerror("Database Error", "Failed to create user login credentials.")
+            return
+
+        ok = self.db.add_student(student_data, user_id)
+        if ok:
+            id_display = f"Student ID: {student_id_val}" if edu_type == "School" else f"Enrollment Number: {enrollment_number_val}"
+            messagebox.showinfo(
+                "Registration Successful",
+                f"Face Registered Successfully ✓\nStudent Account created successfully!\n\nEducation Type: {edu_type}\n{id_display}\n\nYou can now log in immediately."
+            )
+            self._finish_registration(username_to_create)
+        else:
+            messagebox.showerror("Database Error", "Failed to save Student record.")
 
     def _finish_registration(self, prefill_username: str):
         self.grab_release()

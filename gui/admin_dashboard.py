@@ -12,6 +12,180 @@ from reports.report_manager import ReportManager
 from ml.prediction import PerformancePredictor
 from utils.helpers import get_current_date
 
+class IndividualStudentResultDialog(tk.Toplevel):
+    """Full Individual Student Academic Result & Marksheet Dashboard Dialog."""
+    def __init__(self, parent, db_manager: DBManager, student_id: str):
+        super().__init__(parent)
+        self.db = db_manager
+        self.student_id = student_id
+        self.student = self.db.get_student(self.student_id) or {}
+
+        sname = self.student.get('name', self.student_id)
+        self.title(f"Individual Student Result Dashboard — {sname} ({self.student_id})")
+        self.geometry("880x660")
+        self.minsize(760, 540)
+        self.transient(parent.winfo_toplevel() if hasattr(parent, 'winfo_toplevel') else parent)
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # Header / Title
+        top_hdr = ttk.Frame(self, padding=12)
+        top_hdr.pack(fill=tk.X)
+        ttk.Label(top_hdr, text="🎓 INDIVIDUAL STUDENT RESULT DASHBOARD", font=FONTS["h1"], foreground=COLORS["primary"]).pack(anchor=tk.W)
+
+        # Student Details Card
+        info_card = ttk.LabelFrame(self, text=" Student Profile Details ", padding=12)
+        info_card.pack(fill=tk.X, padx=15, pady=(0, 10))
+
+        sname = self.student.get('name', 'N/A')
+        sid = self.student.get('student_id', self.student_id)
+        edu_type = self.student.get('education_type', 'School')
+        father = self.student.get('father_name') or self.student.get('guardian_name') or 'N/A'
+        roll = self.student.get('roll_number') or 'N/A'
+        adm_date = self.student.get('admission_date') or 'N/A'
+
+        r1 = ttk.Frame(info_card)
+        r1.pack(fill=tk.X, pady=2)
+        ttk.Label(r1, text="Student Name:", font=FONTS["body_bold"], width=15).pack(side=tk.LEFT)
+        ttk.Label(r1, text=sname, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(r1, text="Student ID:", font=FONTS["body_bold"], width=14).pack(side=tk.LEFT)
+        ttk.Label(r1, text=sid, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(r1, text="Category:", font=FONTS["body_bold"], width=10).pack(side=tk.LEFT)
+        ttk.Label(r1, text=edu_type, font=FONTS["body_bold"], foreground="#0284c7").pack(side=tk.LEFT)
+
+        r2 = ttk.Frame(info_card)
+        r2.pack(fill=tk.X, pady=2)
+        if edu_type == "College":
+            enr = self.student.get('enrollment_number') or sid
+            col_name = self.student.get('college_name') or 'N/A'
+            course = self.student.get('course') or 'N/A'
+            sem = self.student.get('semester') or 'N/A'
+            ttk.Label(r2, text="Enrollment No:", font=FONTS["body_bold"], width=15).pack(side=tk.LEFT)
+            ttk.Label(r2, text=enr, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+            ttk.Label(r2, text="College Name:", font=FONTS["body_bold"], width=14).pack(side=tk.LEFT)
+            ttk.Label(r2, text=col_name, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+            ttk.Label(r2, text="Course / Sem:", font=FONTS["body_bold"], width=12).pack(side=tk.LEFT)
+            ttk.Label(r2, text=f"{course} (Sem: {sem})", font=FONTS["body"]).pack(side=tk.LEFT)
+        else:
+            sch_name = self.student.get('school_name') or 'N/A'
+            cls_name = self.student.get('current_class') or 'N/A'
+            sec_name = self.student.get('section') or 'N/A'
+            ttk.Label(r2, text="School Name:", font=FONTS["body_bold"], width=15).pack(side=tk.LEFT)
+            ttk.Label(r2, text=sch_name, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+            ttk.Label(r2, text="Class & Sec:", font=FONTS["body_bold"], width=14).pack(side=tk.LEFT)
+            ttk.Label(r2, text=f"{cls_name} - {sec_name}", font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+            ttk.Label(r2, text="Roll Number:", font=FONTS["body_bold"], width=12).pack(side=tk.LEFT)
+            ttk.Label(r2, text=roll, font=FONTS["body"]).pack(side=tk.LEFT)
+
+        r3 = ttk.Frame(info_card)
+        r3.pack(fill=tk.X, pady=2)
+        ttk.Label(r3, text="Father / Guardian:", font=FONTS["body_bold"], width=15).pack(side=tk.LEFT)
+        ttk.Label(r3, text=father, font=FONTS["body"]).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Label(r3, text="Admission Date:", font=FONTS["body_bold"], width=14).pack(side=tk.LEFT)
+        ttk.Label(r3, text=adm_date, font=FONTS["body"]).pack(side=tk.LEFT)
+
+        # Marks Table
+        tbl_card = ttk.LabelFrame(self, text=" Subject-wise Academic Evaluation ", padding=10)
+        tbl_card.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
+
+        cols = ("subject", "internal", "mid", "proj", "viva", "final", "total", "grade", "status")
+        tree = ttk.Treeview(tbl_card, columns=cols, show="headings", height=8)
+
+        tree.heading("subject", text="Subject")
+        tree.heading("internal", text="Internal (20)")
+        tree.heading("mid", text="Midterm (30)")
+        tree.heading("proj", text="Project (20)")
+        tree.heading("viva", text="Viva (10)")
+        tree.heading("final", text="Final (100)")
+        tree.heading("total", text="Total (180)")
+        tree.heading("grade", text="Grade")
+        tree.heading("status", text="Status")
+
+        for c in cols:
+            tree.column(c, width=75, anchor="center")
+        tree.column("subject", width=170, anchor="w")
+
+        tree.tag_configure("pass_tag", foreground=COLORS["success"])
+        tree.tag_configure("fail_tag", foreground=COLORS["danger"])
+
+        all_m = self.db.get_all_student_marks(self.student_id)
+        total_obtained = 0.0
+        total_max = 0.0
+        has_fail = False
+
+        for m in all_m:
+            total_obtained += m['total_marks']
+            total_max += (m.get('max_marks') or 180.0)
+            if m['status'] == 'Fail':
+                has_fail = True
+            tag = "pass_tag" if m['status'] == 'Pass' else "fail_tag"
+            tree.insert("", tk.END, values=(
+                m['subject'], m['internal_marks'], m['mid_term_marks'], m['project_marks'],
+                m['viva_marks'], m['final_exam_marks'], m['total_marks'], m['grade'], m['status']
+            ), tags=(tag,))
+
+        sb = ttk.Scrollbar(tbl_card, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=sb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Overall Summary Section
+        summary_card = ttk.LabelFrame(self, text=" Overall Academic Performance Summary ", padding=12)
+        summary_card.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        overall_pct = (total_obtained / total_max * 100.0) if total_max > 0 else 0.0
+        overall_status = "Fail" if has_fail or overall_pct < 40.0 else "Pass"
+        
+        if overall_pct >= 60.0 and overall_status == "Pass":
+            division = "1st Division"
+        elif overall_pct >= 50.0 and overall_status == "Pass":
+            division = "2nd Division"
+        elif overall_pct >= 40.0 and overall_status == "Pass":
+            division = "3rd Division"
+        else:
+            division = "Fail"
+
+        # Grade calculation
+        if overall_pct >= 90:
+            overall_grade = "A+"
+        elif overall_pct >= 80:
+            overall_grade = "A"
+        elif overall_pct >= 70:
+            overall_grade = "B"
+        elif overall_pct >= 60:
+            overall_grade = "C"
+        elif overall_pct >= 50:
+            overall_grade = "D"
+        elif overall_pct >= 40:
+            overall_grade = "E"
+        else:
+            overall_grade = "F"
+
+        sr = ttk.Frame(summary_card)
+        sr.pack(fill=tk.X)
+
+        f_tot = ttk.Frame(sr)
+        f_tot.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Label(f_tot, text="Overall Total:", font=FONTS["body_bold"]).pack(anchor=tk.W)
+        ttk.Label(f_tot, text=f"{total_obtained:.1f} / {total_max:.1f}", font=("Segoe UI", 12, "bold"), foreground="#0284c7").pack(anchor=tk.W)
+
+        f_pct = ttk.Frame(sr)
+        f_pct.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Label(f_pct, text="Percentage:", font=FONTS["body_bold"]).pack(anchor=tk.W)
+        ttk.Label(f_pct, text=f"{overall_pct:.2f}%", font=("Segoe UI", 12, "bold"), foreground="#7c3aed").pack(anchor=tk.W)
+
+        f_grd = ttk.Frame(sr)
+        f_grd.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Label(f_grd, text="Grade & Division:", font=FONTS["body_bold"]).pack(anchor=tk.W)
+        ttk.Label(f_grd, text=f"{overall_grade} ({division})", font=("Segoe UI", 12, "bold"), foreground="#d97706").pack(anchor=tk.W)
+
+        f_st = ttk.Frame(sr)
+        f_st.pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Label(f_st, text="Result Status:", font=FONTS["body_bold"]).pack(anchor=tk.W)
+        st_color = COLORS["success"] if overall_status == "Pass" else COLORS["danger"]
+        ttk.Label(f_st, text=overall_status.upper(), font=("Segoe UI", 12, "bold"), foreground=st_color).pack(anchor=tk.W)
+
 class AdminDashboard(tk.Toplevel):
     """Primary Control Center for Administrator Role."""
     def __init__(self, welcome_win: tk.Tk, db_manager: DBManager, user_data: dict):
@@ -118,9 +292,9 @@ class AdminDashboard(tk.Toplevel):
         btn_export = ttk.Button(hdr, text="📥 Export CSV", style="Accent.TButton", command=self.export_students_csv)
         btn_export.pack(side=tk.RIGHT, padx=5)
 
-        # Top Action Bar & Search (Add, Edit, Delete, Search together at top)
+        # Top Action Bar (Add, Edit, Delete, Register Face, Enter Marks)
         action_frame = ttk.Frame(self.content_frame)
-        action_frame.pack(fill=tk.X, pady=(0, 10))
+        action_frame.pack(fill=tk.X, pady=(0, 8))
 
         ttk.Button(action_frame, text="➕ Add Student", style="Primary.TButton", command=self.add_student_dialog).pack(side=tk.LEFT, padx=3)
         ttk.Button(action_frame, text="✏️ Edit Student", command=self.edit_selected_student).pack(side=tk.LEFT, padx=3)
@@ -128,39 +302,48 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(action_frame, text="📷 Register Face", style="Accent.TButton", command=self.register_selected_face).pack(side=tk.LEFT, padx=3)
         ttk.Button(action_frame, text="📊 Enter Marks", command=self.enter_selected_marks).pack(side=tk.LEFT, padx=3)
 
-        ttk.Label(action_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 2))
-        self.entry_search = ttk.Entry(action_frame, width=22)
-        self.entry_search.pack(side=tk.LEFT, padx=3)
-        self.entry_search.bind("<KeyRelease>", lambda e: self.load_students_table())
+        # Filters Row: Mode selector first on the left, then Dept, then Search
+        filter_frame = ttk.Frame(self.content_frame)
+        filter_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(action_frame, text="Dept:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(10, 2))
-        self.combo_dept_filter = ttk.Combobox(action_frame, values=["All", "Computer Science & Engineering", "Information Technology", "Artificial Intelligence"], state="readonly", width=18)
-        self.combo_dept_filter.set("All")
-        self.combo_dept_filter.pack(side=tk.LEFT, padx=3)
-        self.combo_dept_filter.bind("<<ComboboxSelected>>", lambda e: self.load_students_table())
+        ttk.Label(filter_frame, text="Mode:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 4))
+        self.combo_category = ttk.Combobox(filter_frame, values=["School", "College"], state="readonly", width=12)
+        self.combo_category.set("School")
+        self.combo_category.pack(side=tk.LEFT, padx=(0, 20))
+        self.combo_category.bind("<<ComboboxSelected>>", lambda e: self.load_students_table())
+
+        ttk.Label(filter_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 4))
+        self.entry_search = ttk.Entry(filter_frame, width=22)
+        self.entry_search.pack(side=tk.LEFT, padx=(0, 5))
+        btn_search_stu = ttk.Button(filter_frame, text="Search", command=self.load_students_table)
+        btn_search_stu.pack(side=tk.LEFT, padx=(0, 10))
+        self.entry_search.bind("<KeyRelease>", lambda e: self.load_students_table())
+        self.entry_search.bind("<Return>", lambda e: self.load_students_table())
 
         # Table
         tbl_frame = ttk.Frame(self.content_frame)
         tbl_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("id", "name", "email", "phone", "course", "dept", "class")
+        cols = ("id", "name", "school_name", "dept", "class", "phone", "email")
         self.tree_students = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=14)
+        self.tree_students.tag_configure("highlighted", font=FONTS.get("body_bold", ("Segoe UI", 10, "bold")), background="#fef08a", foreground="#0f172a")
+        self.tree_students.tag_configure("normal", font=FONTS.get("body", ("Segoe UI", 10)))
 
         self.tree_students.heading("id", text="Student ID")
         self.tree_students.heading("name", text="Full Name")
-        self.tree_students.heading("email", text="Email")
-        self.tree_students.heading("phone", text="Phone")
-        self.tree_students.heading("course", text="Course / Program")
+        self.tree_students.heading("school_name", text="School Name")
         self.tree_students.heading("dept", text="Department")
         self.tree_students.heading("class", text="Class")
+        self.tree_students.heading("phone", text="Phone")
+        self.tree_students.heading("email", text="Email")
 
         self.tree_students.column("id", width=95, anchor="center")
-        self.tree_students.column("name", width=140, anchor="w")
-        self.tree_students.column("email", width=150, anchor="w")
+        self.tree_students.column("name", width=130, anchor="w")
+        self.tree_students.column("school_name", width=150, anchor="w")
+        self.tree_students.column("dept", width=120, anchor="w")
+        self.tree_students.column("class", width=80, anchor="center")
         self.tree_students.column("phone", width=105, anchor="center")
-        self.tree_students.column("course", width=140, anchor="w")
-        self.tree_students.column("dept", width=140, anchor="w")
-        self.tree_students.column("class", width=90, anchor="center")
+        self.tree_students.column("email", width=140, anchor="w")
 
         scrollbar = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree_students.yview)
         self.tree_students.configure(yscroll=scrollbar.set)
@@ -176,13 +359,51 @@ class AdminDashboard(tk.Toplevel):
 
         st = self.entry_search.get().strip() if hasattr(self, 'entry_search') else ""
         dept = self.combo_dept_filter.get() if hasattr(self, 'combo_dept_filter') else "All"
+        cat = self.combo_category.get() if hasattr(self, 'combo_category') else "School"
 
-        students = self.db.get_all_students(search_term=st, filter_dept=dept)
+        if cat == "School":
+            self.tree_students.heading("school_name", text="School Name")
+            self.tree_students.heading("class", text="Class")
+        else:
+            self.tree_students.heading("school_name", text="College / School Name")
+            self.tree_students.heading("class", text="Semester")
+
+        # Load all students of the current mode so non-matching rows are preserved in view
+        students = self.db.get_all_students(filter_dept=dept, filter_edu_type=cat)
+        first_match = None
+        matched_any = False
         for s in students:
-            self.tree_students.insert("", tk.END, values=(
-                s['student_id'], s['name'], s.get('email', ''), s.get('phone', ''),
-                s.get('course', ''), s.get('department', ''), s.get('current_class', '')
-            ))
+            school_val = s.get('school_name') or s.get('previous_school') or s.get('college_name') or ''
+            dept_val = s.get('department') or ''
+            class_val = s.get('current_class', '') if cat == "School" else (s.get('semester') or s.get('current_class', ''))
+            
+            is_match = False
+            if st:
+                st_lower = st.lower()
+                if (st_lower in s['name'].lower() or
+                    st_lower in s['student_id'].lower() or
+                    st_lower in s.get('email', '').lower() or
+                    st_lower in s.get('phone', '').lower() or
+                    st_lower in school_val.lower() or
+                    st_lower in dept_val.lower()):
+                    is_match = True
+                    matched_any = True
+
+            tag = "highlighted" if is_match else "normal"
+            item_id = self.tree_students.insert("", tk.END, values=(
+                s['student_id'], s['name'], school_val, dept_val, class_val,
+                s.get('phone', ''), s.get('email', '')
+            ), tags=(tag,))
+
+            if is_match and first_match is None:
+                first_match = item_id
+
+        if st and not matched_any:
+            self.tree_students.insert("", tk.END, values=("No record found", "-", "-", "-", "-", "-", "-"))
+
+        if first_match:
+            self.tree_students.selection_set(first_match)
+            self.tree_students.see(first_match)
 
     def add_student_dialog(self):
         StudentFormDialog(self, self.db, on_save_callback=self.load_students_table)
@@ -193,7 +414,7 @@ class AdminDashboard(tk.Toplevel):
             messagebox.showwarning("Warning", "Please select a student from the table.")
             return
         item_vals = self.tree_students.item(sel[0])['values']
-        if not item_vals:
+        if not item_vals or item_vals[0] == "No record found":
             return
         sid = str(item_vals[0]).strip()
         StudentFormDialog(self, self.db, student_id=sid, on_save_callback=self.load_students_table)
@@ -201,10 +422,14 @@ class AdminDashboard(tk.Toplevel):
     def register_selected_face(self):
         sel = self.tree_students.selection()
         if not sel:
-            messagebox.showwarning("Warning", "Please select a student from the table to register face.")
+            messagebox.showwarning("Warning", "Please select a student from the table.")
             return
-        sid = self.tree_students.item(sel[0])['values'][0]
-        sname = self.tree_students.item(sel[0])['values'][1]
+        item_vals = self.tree_students.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        sid = item_vals[0]
+        st_rec = self.db.get_student(sid)
+        sname = st_rec.get('name', item_vals[1]) if st_rec else item_vals[1]
 
         from face_attendance.face_registration import FaceRegisterWindow
         FaceRegisterWindow(self, sid, sname, self.db)
@@ -214,8 +439,11 @@ class AdminDashboard(tk.Toplevel):
         if not sel:
             messagebox.showwarning("Warning", "Please select a student from the table.")
             return
-        sid = self.tree_students.item(sel[0])['values'][0]
-        sname = self.tree_students.item(sel[0])['values'][1]
+        item_vals = self.tree_students.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        sid = item_vals[0]
+        sname = item_vals[1]
         MarksEntryDialog(self, self.db, sid, sname)
 
     def delete_selected_student(self):
@@ -223,8 +451,11 @@ class AdminDashboard(tk.Toplevel):
         if not sel:
             messagebox.showwarning("Warning", "Please select a student from the table.")
             return
-        sid = self.tree_students.item(sel[0])['values'][0]
-        sname = self.tree_students.item(sel[0])['values'][1]
+        item_vals = self.tree_students.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        sid = item_vals[0]
+        sname = item_vals[1]
 
         if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete Student '{sname}' ({sid})?\nAll attendance and marks records will be permanently removed."):
             self.db.delete_student(sid)
@@ -258,9 +489,12 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(action_frame, text="📷 Register Face", style="Accent.TButton", command=self.register_selected_teacher_face).pack(side=tk.LEFT, padx=3)
 
         ttk.Label(action_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 2))
-        self.entry_teacher_search = ttk.Entry(action_frame, width=25)
+        self.entry_teacher_search = ttk.Entry(action_frame, width=20)
         self.entry_teacher_search.pack(side=tk.LEFT, padx=3)
+        btn_search_tch = ttk.Button(action_frame, text="Search", command=self.load_teachers_table)
+        btn_search_tch.pack(side=tk.LEFT, padx=3)
         self.entry_teacher_search.bind("<KeyRelease>", lambda e: self.load_teachers_table())
+        self.entry_teacher_search.bind("<Return>", lambda e: self.load_teachers_table())
 
         # Table
         tbl_frame = ttk.Frame(self.content_frame)
@@ -268,6 +502,7 @@ class AdminDashboard(tk.Toplevel):
 
         cols = ("id", "name", "email", "phone", "dept", "desig")
         self.tree_teachers = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=14)
+        self.tree_teachers.tag_configure("highlighted", font=FONTS.get("body_bold", ("Segoe UI", 10, "bold")), background="#fef08a", foreground="#0f172a")
 
         self.tree_teachers.heading("id", text="Teacher ID")
         self.tree_teachers.heading("name", text="Full Name")
@@ -293,13 +528,29 @@ class AdminDashboard(tk.Toplevel):
     def load_teachers_table(self):
         for item in self.tree_teachers.get_children():
             self.tree_teachers.delete(item)
-        st = self.entry_teacher_search.get().strip() if hasattr(self, 'entry_teacher_search') else ""
-        teachers = self.db.get_all_teachers(search_term=st)
+        st = self.entry_teacher_search.get().strip().lower() if hasattr(self, 'entry_teacher_search') else ""
+        teachers = self.db.get_all_teachers()
+        matched_count = 0
         for t in teachers:
-            self.tree_teachers.insert("", tk.END, values=(
+            row_vals = (
                 t['teacher_id'], t['name'], t.get('email', ''), t.get('phone', ''),
                 t.get('department', ''), t.get('designation', '')
-            ))
+            )
+            row_str = " ".join(str(v) for v in row_vals).lower()
+            tags = []
+            if st:
+                if st in row_str:
+                    tags.append("highlighted")
+                    matched_count += 1
+                else:
+                    continue
+            else:
+                matched_count += 1
+
+            self.tree_teachers.insert("", tk.END, values=row_vals, tags=tuple(tags))
+
+        if st and matched_count == 0:
+            self.tree_teachers.insert("", tk.END, values=("No record found", "-", "-", "-", "-", "-"))
 
     def add_teacher_dialog(self):
         TeacherFormDialog(self, self.db, on_save_callback=self.load_teachers_table)
@@ -309,7 +560,10 @@ class AdminDashboard(tk.Toplevel):
         if not sel:
             messagebox.showwarning("Warning", "Please select a teacher from the table.")
             return
-        tid = self.tree_teachers.item(sel[0])['values'][0]
+        item_vals = self.tree_teachers.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        tid = item_vals[0]
         TeacherFormDialog(self, self.db, teacher_id=tid, on_save_callback=self.load_teachers_table)
 
     def delete_selected_teacher(self):
@@ -317,10 +571,13 @@ class AdminDashboard(tk.Toplevel):
         if not sel:
             messagebox.showwarning("Warning", "Please select a teacher from the table.")
             return
-        tid = self.tree_teachers.item(sel[0])['values'][0]
-        tname = self.tree_teachers.item(sel[0])['values'][1]
+        item_vals = self.tree_teachers.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        tid = item_vals[0]
+        tname = item_vals[1]
 
-        if messagebox.askyesno("Confirm Delete", f"Delete Teacher '{tname}' ({tid})?"):
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete Teacher '{tname}' ({tid})?\nAll attendance logs will be permanently deleted."):
             self.db.delete_teacher(tid)
             messagebox.showinfo("Deleted", f"Teacher '{tname}' removed.")
             self.load_teachers_table()
@@ -328,136 +585,95 @@ class AdminDashboard(tk.Toplevel):
     def register_selected_teacher_face(self):
         sel = self.tree_teachers.selection()
         if not sel:
-            messagebox.showwarning("Warning", "Please select a teacher from the table to register face.")
+            messagebox.showwarning("Warning", "Please select a teacher from the table.")
             return
-        tid = self.tree_teachers.item(sel[0])['values'][0]
-        tname = self.tree_teachers.item(sel[0])['values'][1]
-
+        item_vals = self.tree_teachers.item(sel[0])['values']
+        if not item_vals or item_vals[0] == "No record found":
+            return
+        tid = item_vals[0]
+        tname = item_vals[1]
         from face_attendance.face_registration import FaceRegisterWindow
         FaceRegisterWindow(self, tid, tname, self.db)
 
+    # --- TEACHER PAYROLL & SALARIES ---
     def show_teacher_salaries(self):
         self.clear_content()
-        ttk.Label(self.content_frame, text="💵 Teacher Salary Management", font=FONTS["h1"]).pack(anchor=tk.W, pady=(0, 10))
 
-        # Admin Edit Form Box (Set/Update Individual Teacher Salary)
-        form_card = ttk.LabelFrame(self.content_frame, text=" Set / Edit Individual Teacher Salary ", padding=15)
-        form_card.pack(fill=tk.X, pady=(0, 15))
+        hdr = ttk.Frame(self.content_frame)
+        hdr.pack(fill=tk.X, pady=(0, 10))
 
-        f_row = ttk.Frame(form_card)
-        f_row.pack(fill=tk.X, pady=5)
+        ttk.Label(hdr, text="💵 Teacher Payroll & Base Salary Management", font=FONTS["h1"]).pack(side=tk.LEFT)
 
-        ttk.Label(f_row, text="Select Teacher Name *:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 5))
-        
-        teachers = self.db.get_all_teachers()
-        teacher_options = [f"{t['name']} ({t['teacher_id']})" for t in teachers]
-        self.combo_teacher_salary = ttk.Combobox(f_row, values=teacher_options, state="readonly", width=30)
-        self.combo_teacher_salary.pack(side=tk.LEFT, padx=5)
+        # Top Action Bar
+        action_frame = ttk.Frame(self.content_frame)
+        action_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(f_row, text="Monthly Salary (₹) *:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 5))
-        self.entry_teacher_monthly_salary = ttk.Entry(f_row, width=15)
-        self.entry_teacher_monthly_salary.pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="✏️ Edit Monthly Salary", style="Primary.TButton", command=self.edit_selected_teacher_salary).pack(side=tk.LEFT, padx=3)
 
-        btn_save = ttk.Button(f_row, text="💾 Save Salary", style="Primary.TButton", command=self.save_teacher_salary)
-        btn_save.pack(side=tk.LEFT, padx=15)
-
-        def _on_teacher_selected(event=None):
-            sel = self.combo_teacher_salary.get()
-            if not sel:
-                return
-            try:
-                tid = sel.split("(")[-1].rstrip(")").strip()
-                t_rec = self.db.get_teacher(tid)
-                if t_rec:
-                    curr_sal = t_rec.get("monthly_salary", 35000.0)
-                    self.entry_teacher_monthly_salary.delete(0, tk.END)
-                    self.entry_teacher_monthly_salary.insert(0, f"{float(curr_sal):g}")
-            except Exception as ex:
-                print("Error loading teacher salary:", ex)
-
-        self.combo_teacher_salary.bind("<<ComboboxSelected>>", _on_teacher_selected)
-        if teacher_options:
-            self.combo_teacher_salary.set(teacher_options[0])
-            _on_teacher_selected()
-
-        # Records Table Frame
+        # Table
         tbl_frame = ttk.Frame(self.content_frame)
         tbl_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("id", "name", "dept", "base_sal", "present_days", "work_hrs", "late_mins", "overtime", "total_sal")
-        self.tree_salaries = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=12)
+        cols = ("id", "name", "dept", "desig", "salary")
+        self.tree_salaries = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=14)
 
         self.tree_salaries.heading("id", text="Teacher ID")
         self.tree_salaries.heading("name", text="Teacher Name")
         self.tree_salaries.heading("dept", text="Department")
-        self.tree_salaries.heading("base_sal", text="Monthly Salary (Base)")
-        self.tree_salaries.heading("present_days", text="Present Days")
-        self.tree_salaries.heading("work_hrs", text="Total Work Hrs")
-        self.tree_salaries.heading("late_mins", text="Late Mins")
-        self.tree_salaries.heading("overtime", text="Overtime Hrs")
-        self.tree_salaries.heading("total_sal", text="Total Net Salary")
+        self.tree_salaries.heading("desig", text="Designation")
+        self.tree_salaries.heading("salary", text="Configured Base Salary (₹)")
 
-        self.tree_salaries.column("id", width=100, anchor="center")
-        self.tree_salaries.column("name", width=160, anchor="w")
-        self.tree_salaries.column("dept", width=130, anchor="w")
-        self.tree_salaries.column("base_sal", width=140, anchor="center")
-        self.tree_salaries.column("present_days", width=100, anchor="center")
-        self.tree_salaries.column("work_hrs", width=110, anchor="center")
-        self.tree_salaries.column("late_mins", width=95, anchor="center")
-        self.tree_salaries.column("overtime", width=100, anchor="center")
-        self.tree_salaries.column("total_sal", width=120, anchor="center")
+        self.tree_salaries.column("id", width=120, anchor="center")
+        self.tree_salaries.column("name", width=200, anchor="w")
+        self.tree_salaries.column("dept", width=180, anchor="w")
+        self.tree_salaries.column("desig", width=160, anchor="w")
+        self.tree_salaries.column("salary", width=180, anchor="center")
 
-        sb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree_salaries.yview)
-        self.tree_salaries.configure(yscroll=sb.set)
+        scrollbar = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree_salaries.yview)
+        self.tree_salaries.configure(yscroll=scrollbar.set)
         self.tree_salaries.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_salaries.bind("<Double-1>", lambda e: self.edit_selected_teacher_salary())
 
         self.load_teacher_salaries_table()
 
     def load_teacher_salaries_table(self):
-        if not hasattr(self, 'tree_salaries'):
-            return
         for item in self.tree_salaries.get_children():
             self.tree_salaries.delete(item)
-
-        salaries = self.db.get_all_teachers_salary_summary()
-        for s in salaries:
+        teachers = self.db.get_all_teachers()
+        for t in teachers:
+            salary_val = float(t.get('monthly_salary') or 35000.0)
             self.tree_salaries.insert("", tk.END, values=(
-                s['teacher_id'], s['teacher_name'], s['department'],
-                f"₹{s['base_salary']:,.2f}",
-                f"{s['present_days']} / {s['working_days']}",
-                f"{s['total_working_hours']:.2f}h",
-                f"{s['late_summary_mins']}m",
-                f"{s['overtime_hours']:.2f}h",
-                f"₹{s['total_salary']:,.2f}"
+                t['teacher_id'], t['name'], t.get('department', 'Science'),
+                t.get('designation', 'Lecturer'), f"₹{salary_val:.2f}"
             ))
 
-    def save_teacher_salary(self):
-        sel = self.combo_teacher_salary.get()
+    def edit_selected_teacher_salary(self):
+        sel = self.tree_salaries.selection()
         if not sel:
-            messagebox.showwarning("Validation Error", "Please select a teacher from the dropdown list.")
+            messagebox.showwarning("Warning", "Please select a teacher from the table to modify salary.")
+            return
+        tid = self.tree_salaries.item(sel[0])['values'][0]
+        tname = self.tree_salaries.item(sel[0])['values'][1]
+        curr_sal_str = str(self.tree_salaries.item(sel[0])['values'][4]).replace("₹", "").strip()
+
+        # Prompt popup for new salary
+        from tkinter import simpledialog
+        new_salary_str = simpledialog.askstring("Edit Teacher Salary", f"Enter new Monthly Base Salary (₹) for '{tname}' ({tid}):", initialvalue=curr_sal_str, parent=self)
+        if not new_salary_str:
             return
 
-        sal_str = self.entry_teacher_monthly_salary.get().strip()
         try:
-            val = float(sal_str)
-            if val < 0:
+            new_salary = float(new_salary_str.strip())
+            if new_salary < 0:
                 raise ValueError()
         except ValueError:
-            messagebox.showerror("Invalid Input", "Please enter a valid positive numeric salary.")
+            messagebox.showerror("Invalid Input", "Please enter a valid positive numerical amount for salary.")
             return
 
-        try:
-            tid = sel.split("(")[-1].rstrip(")").strip()
-            t_rec = self.db.get_teacher(tid)
-            tname = t_rec['name'] if t_rec else sel
-        except Exception:
-            messagebox.showerror("Error", "Could not identify teacher record.")
-            return
-
-        ok = self.db.update_teacher_salary(tid, val)
+        ok = self.db.update_teacher_salary(tid, new_salary)
         if ok:
-            messagebox.showinfo("Salary Updated", f"Monthly salary for Teacher '{tname}' ({tid}) updated successfully to ₹{val:,.2f}.")
+            messagebox.showinfo("Salary Updated", f"✓ Monthly Base Salary for '{tname}' updated to ₹{new_salary:.2f}.")
             self.load_teacher_salaries_table()
         else:
             messagebox.showerror("Database Error", f"Failed to update salary for Teacher '{tname}'.")
@@ -480,9 +696,18 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(action_frame, text="🗑️ Delete Parent", style="Danger.TButton", command=self.delete_selected_parent).pack(side=tk.LEFT, padx=3)
 
         ttk.Label(action_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 2))
-        self.entry_parent_search = ttk.Entry(action_frame, width=25)
+        self.entry_parent_search = ttk.Entry(action_frame, width=20)
         self.entry_parent_search.pack(side=tk.LEFT, padx=3)
+        btn_search_par = ttk.Button(action_frame, text="Search", command=self.load_parents_table)
+        btn_search_par.pack(side=tk.LEFT, padx=3)
         self.entry_parent_search.bind("<KeyRelease>", lambda e: self.load_parents_table())
+        self.entry_parent_search.bind("<Return>", lambda e: self.load_parents_table())
+
+        ttk.Label(action_frame, text="Mode:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(10, 2))
+        self.combo_parent_category = ttk.Combobox(action_frame, values=["School", "College"], state="readonly", width=10)
+        self.combo_parent_category.set("School")
+        self.combo_parent_category.pack(side=tk.LEFT, padx=3)
+        self.combo_parent_category.bind("<<ComboboxSelected>>", lambda e: self.load_parents_table())
 
         # Table
         tbl_frame = ttk.Frame(self.content_frame)
@@ -490,6 +715,7 @@ class AdminDashboard(tk.Toplevel):
 
         cols = ("pid", "name", "phone", "email", "relation", "student")
         self.tree_parents = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=14)
+        self.tree_parents.tag_configure("highlighted", font=FONTS.get("body_bold", ("Segoe UI", 10, "bold")), background="#fef08a", foreground="#0f172a")
 
         self.tree_parents.heading("pid", text="Parent ID Code")
         self.tree_parents.heading("name", text="Parent Full Name")
@@ -515,13 +741,77 @@ class AdminDashboard(tk.Toplevel):
     def load_parents_table(self):
         for item in self.tree_parents.get_children():
             self.tree_parents.delete(item)
-        st = self.entry_parent_search.get().strip() if hasattr(self, 'entry_parent_search') else ""
-        parents = self.db.get_all_parents(search_term=st)
+        st = self.entry_parent_search.get().strip().lower() if hasattr(self, 'entry_parent_search') else ""
+        cat = self.combo_parent_category.get() if hasattr(self, 'combo_parent_category') else "School"
+        
+        parents = self.db.get_all_parents()
+        grouped_parents = {}
         for p in parents:
-            self.tree_parents.insert("", tk.END, values=(
-                p.get('parent_id_code', ''), p['name'], p.get('phone', ''),
-                p.get('email', ''), p.get('relationship', 'Parent'), p.get('student_id', '')
-            ))
+            sid = p.get('student_id', '')
+            stu = self.db.get_student(sid) if sid else None
+            if not stu:
+                continue
+            edu_type = stu.get('education_type')
+            if not edu_type or edu_type.strip().lower() != cat.strip().lower():
+                continue
+
+            pid_code = p.get('parent_id_code', '').strip()
+            # Unique grouping key for this actual parent
+            if pid_code:
+                group_key = f"code_{pid_code.lower()}"
+            elif p.get('name') and p.get('phone'):
+                group_key = f"np_{p['name'].strip().lower()}_{p.get('phone', '').strip()}"
+            elif p.get('user_id'):
+                group_key = f"user_{p['user_id']}"
+            else:
+                group_key = f"raw_{p.get('id', p.get('name', ''))}"
+
+            if group_key not in grouped_parents:
+                grouped_parents[group_key] = {
+                    'parent_id_code': pid_code or f"PAR{p.get('id', '')}",
+                    'name': p['name'],
+                    'phone': p.get('phone', ''),
+                    'email': p.get('email', ''),
+                    'relationship': p.get('relationship', 'Parent'),
+                    'student_ids': [sid] if sid else [],
+                    'student_names': [stu.get('name', '')] if stu.get('name') else []
+                }
+            else:
+                if sid and sid not in grouped_parents[group_key]['student_ids']:
+                    grouped_parents[group_key]['student_ids'].append(sid)
+                if stu.get('name') and stu.get('name') not in grouped_parents[group_key]['student_names']:
+                    grouped_parents[group_key]['student_names'].append(stu.get('name'))
+
+        matched_count = 0
+        for p_info in grouped_parents.values():
+            sids_str = ", ".join(p_info['student_ids'])
+            row_vals = (
+                p_info['parent_id_code'], p_info['name'], p_info['phone'],
+                p_info['email'], p_info['relationship'], sids_str
+            )
+            
+            if st:
+                # Check Linked Student ID (exact or substring)
+                match_sid = any(st in sid.lower() for sid in p_info['student_ids'])
+                # Check Linked Student Name (substring)
+                match_sname = any(st in sname.lower() for sname in p_info['student_names'])
+                # Check Parent's own info
+                match_parent = (
+                    st in p_info['parent_id_code'].lower() or
+                    st in p_info['name'].lower() or
+                    st in p_info['phone'].lower() or
+                    st in p_info['email'].lower()
+                )
+
+                if match_sid or match_sname or match_parent:
+                    matched_count += 1
+                    self.tree_parents.insert("", tk.END, values=row_vals, tags=("highlighted",))
+            else:
+                matched_count += 1
+                self.tree_parents.insert("", tk.END, values=row_vals)
+
+        if st and matched_count == 0:
+            self.tree_parents.insert("", tk.END, values=("No record found", "-", "-", "-", "-", "-"))
 
     def add_parent_dialog(self):
         ParentFormDialog(self, self.db, on_save_callback=self.load_parents_table)
@@ -559,46 +849,140 @@ class AdminDashboard(tk.Toplevel):
         hdr = ttk.Frame(self.content_frame)
         hdr.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(hdr, text="📑 Academic Marks & Grades", font=FONTS["h1"]).pack(side=tk.LEFT)
+        ttk.Label(hdr, text="📑 Academic Marks & Evaluation", font=FONTS["h1"]).pack(side=tk.LEFT)
+
+        # Action & Filter Bar
+        m_frame = ttk.Frame(self.content_frame)
+        m_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(m_frame, text="Mode:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 4))
+        combo_category = ttk.Combobox(m_frame, values=["School", "College"], state="readonly", width=12)
+        combo_category.set("School")
+        combo_category.pack(side=tk.LEFT, padx=(0, 15))
+
+        ttk.Label(m_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 4))
+        entry_marks_search = ttk.Entry(m_frame, width=22)
+        entry_marks_search.pack(side=tk.LEFT, padx=(0, 6))
+
+        btn_search = ttk.Button(m_frame, text="Search", command=lambda: refresh_marks())
+        btn_search.pack(side=tk.LEFT, padx=(0, 15))
+
+        def open_selected_result():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Notice", "Please select a student from the table to view the Result Dashboard.")
+                return
+            vals = tree.item(sel[0])['values']
+            if not vals or vals[0] == "No record found":
+                return
+            sid = str(vals[0]).strip()
+            IndividualStudentResultDialog(self, self.db, sid)
+
+        btn_view_marksheet = ttk.Button(m_frame, text="🎓 View Student Result Dashboard", style="Primary.TButton", command=open_selected_result)
+        btn_view_marksheet.pack(side=tk.LEFT, padx=5)
 
         # Table
         tbl_frame = ttk.Frame(self.content_frame)
         tbl_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("id", "name", "class", "subject", "internal", "mid", "proj", "viva", "final", "total", "pct", "grade", "status")
-        tree = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=15)
+        tree = ttk.Treeview(tbl_frame, show="headings", height=15)
+        tree.tag_configure("highlight", background="#fef08a", font=("Segoe UI", 9, "bold"))
+        tree.bind("<Double-1>", lambda e: open_selected_result())
 
-        tree.heading("id", text="Student ID")
-        tree.heading("name", text="Name")
-        tree.heading("class", text="Class")
-        tree.heading("subject", text="Subject")
-        tree.heading("internal", text="Internal")
-        tree.heading("mid", text="MidTerm")
-        tree.heading("proj", text="Project")
-        tree.heading("viva", text="Viva")
-        tree.heading("final", text="Final")
-        tree.heading("total", text="Total")
-        tree.heading("pct", text="Pct %")
-        tree.heading("grade", text="Grade")
-        tree.heading("status", text="Status")
+        scrollbar = ttk.Scrollbar(tbl_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        for c in cols:
-            tree.column(c, width=75, anchor="center")
-        tree.column("name", width=140, anchor="w")
-        tree.column("subject", width=130, anchor="w")
+        def refresh_marks():
+            for item in tree.get_children():
+                tree.delete(item)
+            
+            cat = combo_category.get()
+            q = entry_marks_search.get().strip().lower()
 
-        students = self.db.get_all_students()
-        for s in students:
-            all_m = self.db.get_all_student_marks(s['student_id'])
-            for m in all_m:
-                tree.insert("", tk.END, values=(
-                    s['student_id'], s['name'], s.get('current_class', ''),
-                    m['subject'], m['internal_marks'], m['mid_term_marks'], m['project_marks'],
-                    m['viva_marks'], m['final_exam_marks'], m['total_marks'], f"{m['percentage']:.1f}%",
-                    m['grade'], m['status']
-                ))
+            if cat == "School":
+                cols = ("id", "name", "school", "class", "section", "roll", "phone", "email")
+                tree["columns"] = cols
+                tree.heading("id", text="Student ID")
+                tree.heading("name", text="Student Name")
+                tree.heading("school", text="School Name")
+                tree.heading("class", text="Class")
+                tree.heading("section", text="Section")
+                tree.heading("roll", text="Roll Number")
+                tree.heading("phone", text="Phone")
+                tree.heading("email", text="Email")
 
-        tree.pack(fill=tk.BOTH, expand=True)
+                for c in cols:
+                    tree.column(c, width=105, anchor="center")
+                tree.column("name", width=150, anchor="w")
+                tree.column("school", width=170, anchor="w")
+                tree.column("email", width=160, anchor="w")
+            else:
+                cols = ("id", "enrollment", "name", "college", "course", "semester", "year", "phone", "email")
+                tree["columns"] = cols
+                tree.heading("id", text="Student ID")
+                tree.heading("enrollment", text="Enrollment No")
+                tree.heading("name", text="Student Name")
+                tree.heading("college", text="College Name")
+                tree.heading("course", text="Course / Program")
+                tree.heading("semester", text="Semester")
+                tree.heading("year", text="Academic Year")
+                tree.heading("phone", text="Phone")
+                tree.heading("email", text="Email")
+
+                for c in cols:
+                    tree.column(c, width=100, anchor="center")
+                tree.column("name", width=140, anchor="w")
+                tree.column("college", width=160, anchor="w")
+                tree.column("course", width=130, anchor="w")
+                tree.column("email", width=150, anchor="w")
+
+            students = self.db.get_all_students(filter_edu_type=cat)
+            matched_count = 0
+            for s in students:
+                # ONE ACTUAL STUDENT = ONE ROW
+                if cat == "School":
+                    row_vals = (
+                        s['student_id'],
+                        s.get('name', ''),
+                        s.get('school_name', '') or s.get('previous_school', ''),
+                        s.get('current_class', ''),
+                        s.get('section', ''),
+                        s.get('roll_number', ''),
+                        s.get('phone', ''),
+                        s.get('email', '')
+                    )
+                else:
+                    row_vals = (
+                        s['student_id'],
+                        s.get('enrollment_number', '') or s['student_id'],
+                        s.get('name', ''),
+                        s.get('college_name', '') or s.get('school_name', ''),
+                        s.get('course', '') or s.get('department', ''),
+                        s.get('semester', '') or s.get('current_class', ''),
+                        s.get('academic_year', ''),
+                        s.get('phone', ''),
+                        s.get('email', '')
+                    )
+
+                row_str = " ".join(str(v) for v in row_vals).lower()
+                if q:
+                    if q in row_str:
+                        matched_count += 1
+                        tree.insert("", tk.END, values=row_vals, tags=("highlight",))
+                else:
+                    matched_count += 1
+                    tree.insert("", tk.END, values=row_vals)
+
+            if q and matched_count == 0:
+                empty_row = ("No record found",) + ("-",) * (len(cols) - 1)
+                tree.insert("", tk.END, values=empty_row)
+
+        entry_marks_search.bind("<Return>", lambda e: refresh_marks())
+        entry_marks_search.bind("<KeyRelease>", lambda e: refresh_marks())
+        combo_category.bind("<<ComboboxSelected>>", lambda e: refresh_marks())
+        refresh_marks()
 
     # --- ML PREDICTION CENTER ---
     def show_ml_center(self):
@@ -611,6 +995,14 @@ class AdminDashboard(tk.Toplevel):
 
         btn_retrain = ttk.Button(hdr, text="⚡ Retrain ML Model", style="Primary.TButton", command=self.retrain_model)
         btn_retrain.pack(side=tk.RIGHT)
+
+        # Mode Filter Frame
+        m_frame = ttk.Frame(self.content_frame)
+        m_frame.pack(fill=tk.X, pady=(0, 10))
+        ttk.Label(m_frame, text="Mode:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(0, 4))
+        combo_category = ttk.Combobox(m_frame, values=["School", "College"], state="readonly", width=12)
+        combo_category.set("School")
+        combo_category.pack(side=tk.LEFT)
 
         tbl_frame = ttk.Frame(self.content_frame)
         tbl_frame.pack(fill=tk.BOTH, expand=True)
@@ -634,28 +1026,39 @@ class AdminDashboard(tk.Toplevel):
         tree.column("category", width=170, anchor="center")
         tree.column("risk", width=130, anchor="center")
 
-        students = self.db.get_all_students()
-        for s in students:
-            sid = s['student_id']
-            att = self.db.get_student_attendance_stats(sid)['percentage']
-            marks = self.db.get_student_marks(sid) or {}
+        scrollbar = ttk.Scrollbar(tbl_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def refresh_ml_table():
+            for item in tree.get_children():
+                tree.delete(item)
             
-            pred = self.predictor.predict_performance(
-                attendance_pct=att,
-                study_hours=s.get('study_hours', 2.0),
-                previous_pct=s.get('previous_percentage', 75.0),
-                internal_marks=marks.get('internal_marks', 0),
-                mid_term_marks=marks.get('mid_term_marks', 0),
-                project_marks=marks.get('project_marks', 0),
-                viva_marks=marks.get('viva_marks', 0)
-            )
+            cat = combo_category.get()
+            students = self.db.get_all_students(filter_edu_type=cat)
+            for s in students:
+                sid = s['student_id']
+                att = self.db.get_student_attendance_stats(sid)['percentage']
+                marks = self.db.get_student_marks(sid) or {}
+                
+                pred = self.predictor.predict_performance(
+                    attendance_pct=att,
+                    study_hours=s.get('study_hours', 2.0),
+                    previous_pct=s.get('previous_percentage', 75.0),
+                    internal_marks=marks.get('internal_marks', 0),
+                    mid_term_marks=marks.get('mid_term_marks', 0),
+                    project_marks=marks.get('project_marks', 0),
+                    viva_marks=marks.get('viva_marks', 0)
+                )
 
-            tree.insert("", tk.END, values=(
-                sid, s['name'], f"{att}%", s.get('study_hours', 2.0),
-                f"{pred['predicted_score']}%", pred['category'], pred['risk_level']
-            ))
+                tree.insert("", tk.END, values=(
+                    sid, s['name'], f"{att}%", s.get('study_hours', 2.0),
+                    f"{pred['predicted_score']}%", pred['category'], pred['risk_level']
+                ))
 
-        tree.pack(fill=tk.BOTH, expand=True)
+        combo_category.bind("<<ComboboxSelected>>", lambda e: refresh_ml_table())
+        refresh_ml_table()
 
     def retrain_model(self):
         df = self.reports.generate_student_list_dataframe()
@@ -766,15 +1169,19 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(action_frame, text="🗑️ Delete Holiday", style="Danger.TButton", command=self.delete_selected_holiday).pack(side=tk.LEFT, padx=3)
 
         ttk.Label(action_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 2))
-        self.entry_holiday_search = ttk.Entry(action_frame, width=25)
+        self.entry_holiday_search = ttk.Entry(action_frame, width=20)
         self.entry_holiday_search.pack(side=tk.LEFT, padx=3)
+        btn_search_hol = ttk.Button(action_frame, text="Search", command=self.load_holidays_table)
+        btn_search_hol.pack(side=tk.LEFT, padx=3)
         self.entry_holiday_search.bind("<KeyRelease>", lambda e: self.load_holidays_table())
+        self.entry_holiday_search.bind("<Return>", lambda e: self.load_holidays_table())
 
         tbl_frame = ttk.Frame(tab_holidays)
         tbl_frame.pack(fill=tk.BOTH, expand=True)
 
         cols = ("id", "title", "date", "description")
         self.tree_holidays = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=12)
+        self.tree_holidays.tag_configure("highlighted", font=FONTS.get("body_bold", ("Segoe UI", 10, "bold")), background="#fef08a", foreground="#0f172a")
 
         self.tree_holidays.heading("id", text="ID")
         self.tree_holidays.heading("title", text="Holiday Name")
@@ -805,15 +1212,19 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(act_action_frame, text="🗑️ Delete Activity", style="Danger.TButton", command=self.delete_selected_activity).pack(side=tk.LEFT, padx=3)
 
         ttk.Label(act_action_frame, text="🔍 Search:", font=FONTS["body_bold"]).pack(side=tk.LEFT, padx=(15, 2))
-        self.entry_activity_search = ttk.Entry(act_action_frame, width=25)
+        self.entry_activity_search = ttk.Entry(act_action_frame, width=20)
         self.entry_activity_search.pack(side=tk.LEFT, padx=3)
+        btn_search_act = ttk.Button(act_action_frame, text="Search", command=self.load_activities_table)
+        btn_search_act.pack(side=tk.LEFT, padx=3)
         self.entry_activity_search.bind("<KeyRelease>", lambda e: self.load_activities_table())
+        self.entry_activity_search.bind("<Return>", lambda e: self.load_activities_table())
 
         act_tbl_frame = ttk.Frame(tab_activities)
         act_tbl_frame.pack(fill=tk.BOTH, expand=True)
 
         act_cols = ("id", "title", "date", "description")
         self.tree_activities = ttk.Treeview(act_tbl_frame, columns=act_cols, show="headings", height=12)
+        self.tree_activities.tag_configure("highlighted", font=FONTS.get("body_bold", ("Segoe UI", 10, "bold")), background="#fef08a", foreground="#0f172a")
 
         self.tree_activities.heading("id", text="ID")
         self.tree_activities.heading("title", text="Activity Name")
@@ -838,13 +1249,25 @@ class AdminDashboard(tk.Toplevel):
 
         q = self.entry_holiday_search.get().strip().lower() if hasattr(self, 'entry_holiday_search') else ""
         holidays = self.db.get_all_holidays()
+        matched_count = 0
 
         for h in holidays:
-            if q and q not in h['title'].lower() and q not in h['date'].lower() and q not in h.get('description', '').lower():
-                continue
-            self.tree_holidays.insert("", tk.END, values=(
-                h['id'], h['title'], h['date'], h.get('description', '')
-            ))
+            row_vals = (h['id'], h['title'], h['date'], h.get('description', ''))
+            row_str = " ".join(str(v) for v in row_vals).lower()
+            tags = []
+            if q:
+                if q in row_str:
+                    tags.append("highlighted")
+                    matched_count += 1
+                else:
+                    continue
+            else:
+                matched_count += 1
+
+            self.tree_holidays.insert("", tk.END, values=row_vals, tags=tuple(tags))
+
+        if q and matched_count == 0:
+            self.tree_holidays.insert("", tk.END, values=("", "No record found", "-", "-"))
 
     def load_activities_table(self):
         for row in self.tree_activities.get_children():
@@ -852,13 +1275,25 @@ class AdminDashboard(tk.Toplevel):
 
         q = self.entry_activity_search.get().strip().lower() if hasattr(self, 'entry_activity_search') else ""
         activities = self.db.get_all_activities()
+        matched_count = 0
 
         for a in activities:
-            if q and q not in a['title'].lower() and q not in a['date'].lower() and q not in a.get('description', '').lower():
-                continue
-            self.tree_activities.insert("", tk.END, values=(
-                a['id'], a['title'], a['date'], a.get('description', '')
-            ))
+            row_vals = (a['id'], a['title'], a['date'], a.get('description', ''))
+            row_str = " ".join(str(v) for v in row_vals).lower()
+            tags = []
+            if q:
+                if q in row_str:
+                    tags.append("highlighted")
+                    matched_count += 1
+                else:
+                    continue
+            else:
+                matched_count += 1
+
+            self.tree_activities.insert("", tk.END, values=row_vals, tags=tuple(tags))
+
+        if q and matched_count == 0:
+            self.tree_activities.insert("", tk.END, values=("", "No record found", "-", "-"))
 
     def add_holiday_dialog(self):
         win = tk.Toplevel(self)
@@ -1146,6 +1581,69 @@ class AdminDashboard(tk.Toplevel):
             self.db.delete_activity(int(aid))
             messagebox.showinfo("Deleted", f"Activity '{atitle}' deleted.")
             self.load_activities_table()
+
+    def show_leave_requests(self):
+        self.clear_content()
+
+        hdr = ttk.Frame(self.content_frame)
+        hdr.pack(fill=tk.X, pady=(0, 15))
+        ttk.Label(hdr, text="📝 Student Leave Requests", font=FONTS["h1"]).pack(side=tk.LEFT)
+
+        tbl_frame = ttk.Frame(self.content_frame)
+        tbl_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = ("id", "student_id", "name", "date", "reason", "teacher", "admin", "final")
+        tree = ttk.Treeview(tbl_frame, columns=cols, show="headings", height=15)
+        tree.heading("id", text="Request ID")
+        tree.heading("student_id", text="Student ID")
+        tree.heading("name", text="Student Name")
+        tree.heading("date", text="Leave Date")
+        tree.heading("reason", text="Reason")
+        tree.heading("teacher", text="Teacher Decision")
+        tree.heading("admin", text="Admin Decision")
+        tree.heading("final", text="Final Status")
+
+        tree.column("id", width=80, anchor="center")
+        tree.column("student_id", width=100, anchor="center")
+        tree.column("name", width=140, anchor="w")
+        tree.column("date", width=100, anchor="center")
+        tree.column("reason", width=180, anchor="w")
+        tree.column("teacher", width=110, anchor="center")
+        tree.column("admin", width=110, anchor="center")
+        tree.column("final", width=110, anchor="center")
+
+        sb = ttk.Scrollbar(tbl_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=sb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_bar = ttk.Frame(self.content_frame, padding=10)
+        btn_bar.pack(fill=tk.X)
+
+        def handle_decision(status):
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Warning", "Please select a leave request from the table.")
+                return
+            req_id = tree.item(sel[0])['values'][0]
+            success = self.db.update_leave_request_status(int(req_id), 'Admin', status)
+            if success:
+                messagebox.showinfo("Success", f"Leave request status updated to '{status}'.")
+                refresh_leaves()
+            else:
+                messagebox.showerror("Error", "Failed to update leave request status.")
+
+        ttk.Button(btn_bar, text="Accept Request", style="Success.TButton", command=lambda: handle_decision('Accept')).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_bar, text="Reject Request", style="Danger.TButton", command=lambda: handle_decision('Reject')).pack(side=tk.LEFT, padx=5)
+
+        def refresh_leaves():
+            for item in tree.get_children():
+                tree.delete(item)
+            reqs = self.db.get_all_leave_requests()
+            for r in reqs:
+                tree.insert("", tk.END, values=(r['id'], r['student_id'], r['student_name'], r['leave_date'], r['reason'], r['teacher_status'], r['admin_status'], r['final_status']))
+
+        refresh_leaves()
 
     def on_logout(self):
         if messagebox.askyesno("Confirm Logout", "Are you sure you want to log out of your session?"):

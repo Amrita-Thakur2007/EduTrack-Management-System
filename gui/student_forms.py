@@ -7,7 +7,7 @@ from utils.validators import validate_email, validate_phone, validate_study_hour
 
 class StudentFormDialog(tk.Toplevel):
     """Full Student Registration & Edit Modal Form."""
-    def __init__(self, parent, db_manager: DBManager, student_id: str = None, on_save_callback=None):
+    def __init__(self, parent, db_manager: DBManager, student_id: str = None, on_save_callback=None, default_edu_type: str = None, **kwargs):
         super().__init__(parent)
         self.db = db_manager
         self.student_id = student_id
@@ -96,22 +96,17 @@ class StudentFormDialog(tk.Toplevel):
         self.entry_email = ttk.Entry(f, width=30)
         self.entry_email.grid(row=5, column=1, sticky="w", pady=4, padx=5)
 
-        ttk.Label(f, text="Course / Program:", font=FONTS["body_bold"]).grid(row=6, column=0, sticky="w", pady=4)
-        self.entry_course = ttk.Entry(f, width=30)
-        self.entry_course.insert(0, "B.Tech Computer Science")
-        self.entry_course.grid(row=6, column=1, sticky="w", pady=4, padx=5)
-
-        ttk.Label(f, text="Admission Date:", font=FONTS["body_bold"]).grid(row=7, column=0, sticky="w", pady=4)
+        ttk.Label(f, text="Admission Date:", font=FONTS["body_bold"]).grid(row=6, column=0, sticky="w", pady=4)
         self.entry_adm_date = ttk.Entry(f, width=25)
-        self.entry_adm_date.grid(row=8, column=1, sticky="w", pady=4, padx=5)
+        self.entry_adm_date.grid(row=6, column=1, sticky="w", pady=4, padx=5)
 
-        ttk.Label(f, text="Address:", font=FONTS["body_bold"]).grid(row=9, column=0, sticky="nw", pady=4)
+        ttk.Label(f, text="Address:", font=FONTS["body_bold"]).grid(row=7, column=0, sticky="nw", pady=4)
         self.text_address = tk.Text(f, width=30, height=3, font=FONTS["body"])
-        self.text_address.grid(row=9, column=1, sticky="w", pady=4, padx=5)
+        self.text_address.grid(row=7, column=1, sticky="w", pady=4, padx=5)
 
-        ttk.Label(f, text="Student Photo (Optional):", font=FONTS["body_bold"]).grid(row=10, column=0, sticky="w", pady=4)
+        ttk.Label(f, text="Student Photo (Optional):", font=FONTS["body_bold"]).grid(row=8, column=0, sticky="w", pady=4)
         photo_frame = ttk.Frame(f)
-        photo_frame.grid(row=10, column=1, sticky="w", pady=4, padx=5)
+        photo_frame.grid(row=8, column=1, sticky="w", pady=4, padx=5)
         self.lbl_photo = ttk.Label(photo_frame, text="No photo selected", font=FONTS["small"])
         self.lbl_photo.pack(side=tk.LEFT, padx=(0, 5))
         btn_photo = ttk.Button(photo_frame, text="📁 Browse Photo...", command=self._browse_photo)
@@ -165,24 +160,23 @@ class StudentFormDialog(tk.Toplevel):
     def _build_academic_tab(self):
         f = self.tab_academic
 
-        ttk.Label(f, text="Current Class / Year *:", font=FONTS["body_bold"]).grid(row=0, column=0, sticky="w", pady=4)
-        self.entry_class = ttk.Entry(f, width=25)
-        self.entry_class.insert(0, "Year 2 - CS-A")
-        self.entry_class.grid(row=0, column=1, sticky="w", pady=4, padx=5)
+        ttk.Label(f, text="School Name:", font=FONTS["body_bold"]).grid(row=0, column=0, sticky="w", pady=4)
+        self.entry_school_name = ttk.Entry(f, width=30)
+        self.entry_school_name.grid(row=0, column=1, sticky="w", pady=4, padx=5)
 
-        ttk.Label(f, text="Section *:", font=FONTS["body_bold"]).grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(f, text="Department:", font=FONTS["body_bold"]).grid(row=1, column=0, sticky="w", pady=4)
+        self.entry_dept = ttk.Entry(f, width=30)
+        self.entry_dept.grid(row=1, column=1, sticky="w", pady=4, padx=5)
+
+        ttk.Label(f, text="Current Class / Year *:", font=FONTS["body_bold"]).grid(row=2, column=0, sticky="w", pady=4)
+        self.entry_class = ttk.Entry(f, width=25)
+        self.entry_class.insert(0, "10")
+        self.entry_class.grid(row=2, column=1, sticky="w", pady=4, padx=5)
+
+        ttk.Label(f, text="Section *:", font=FONTS["body_bold"]).grid(row=3, column=0, sticky="w", pady=4)
         self.entry_section = ttk.Entry(f, width=25)
         self.entry_section.insert(0, "A")
-        self.entry_section.grid(row=1, column=1, sticky="w", pady=4, padx=5)
-
-        ttk.Label(f, text="Previous School/College:", font=FONTS["body_bold"]).grid(row=2, column=0, sticky="w", pady=4)
-        self.entry_prev_school = ttk.Entry(f, width=30)
-        self.entry_prev_school.grid(row=2, column=1, sticky="w", pady=4, padx=5)
-
-        ttk.Label(f, text="Previous Percentage (%):", font=FONTS["body_bold"]).grid(row=3, column=0, sticky="w", pady=4)
-        self.entry_prev_pct = ttk.Entry(f, width=25)
-        self.entry_prev_pct.insert(0, "75.0")
-        self.entry_prev_pct.grid(row=3, column=1, sticky="w", pady=4, padx=5)
+        self.entry_section.grid(row=3, column=1, sticky="w", pady=4, padx=5)
 
         ttk.Label(f, text="Study Hours Per Day (ML Feature):", font=FONTS["body_bold"]).grid(row=4, column=0, sticky="w", pady=4)
         self.entry_study_hours = ttk.Entry(f, width=25)
@@ -224,9 +218,6 @@ class StudentFormDialog(tk.Toplevel):
         self.entry_email.delete(0, tk.END)
         self.entry_email.insert(0, s.get('email') or '')
 
-        self.entry_course.delete(0, tk.END)
-        self.entry_course.insert(0, s.get('course') or '')
-
         self.entry_adm_date.delete(0, tk.END)
         self.entry_adm_date.insert(0, s.get('admission_date') or '')
 
@@ -239,19 +230,17 @@ class StudentFormDialog(tk.Toplevel):
             self.lbl_photo.config(text=os.path.basename(self.photo_path))
 
         # 2. Academic Details
+        self.entry_school_name.delete(0, tk.END)
+        self.entry_school_name.insert(0, s.get('school_name') or s.get('previous_school') or s.get('college_name') or '')
+
+        self.entry_dept.delete(0, tk.END)
+        self.entry_dept.insert(0, s.get('department') or '')
+
         self.entry_class.delete(0, tk.END)
-        self.entry_class.insert(0, s.get('current_class') or '')
+        self.entry_class.insert(0, s.get('current_class') or s.get('semester') or '')
 
         self.entry_section.delete(0, tk.END)
         self.entry_section.insert(0, s.get('section') or '')
-
-        self.entry_prev_school.delete(0, tk.END)
-        self.entry_prev_school.insert(0, s.get('previous_school') or '')
-
-        self.entry_prev_pct.delete(0, tk.END)
-        prev_pct_val = s.get('previous_percentage')
-        if prev_pct_val is not None and str(prev_pct_val).strip() != '':
-            self.entry_prev_pct.insert(0, str(prev_pct_val))
 
         self.entry_study_hours.delete(0, tk.END)
         hrs_val = s.get('study_hours')
@@ -299,6 +288,8 @@ class StudentFormDialog(tk.Toplevel):
         name = self.entry_name.get().strip()
         dob = self.entry_dob.get().strip()
         gender = self.combo_gender.get().strip()
+        school_name = self.entry_school_name.get().strip()
+        department = self.entry_dept.get().strip()
         current_class = self.entry_class.get().strip()
         section = self.entry_section.get().strip()
         father_name = self.entry_father.get().strip()
@@ -376,15 +367,7 @@ class StudentFormDialog(tk.Toplevel):
             except ValueError:
                 study_hrs_val = 0.0
 
-        prev_pct_str = self.entry_prev_pct.get().strip()
-        if not prev_pct_str:
-            prev_pct = 0.0
-        else:
-            try:
-                prev_pct = float(prev_pct_str)
-            except ValueError:
-                messagebox.showwarning("Validation Error", "Previous Percentage must be a valid number.")
-                return
+        existing_s = (self.db.get_student(sid) or {}) if self.is_edit else {}
 
         student_data = {
             "student_id": sid,
@@ -402,14 +385,21 @@ class StudentFormDialog(tk.Toplevel):
             "phone": phone,
             "email": email,
             "address": self.text_address.get("1.0", tk.END).strip(),
-            "course": self.entry_course.get().strip(),
-            "admission_date": self.entry_adm_date.get().strip(),
-            "previous_school": self.entry_prev_school.get().strip(),
-            "previous_percentage": prev_pct,
+            "school_name": school_name,
+            "department": department,
+            "previous_school": school_name if school_name else existing_s.get("previous_school", ""),
+            "course": existing_s.get("course", ""),
+            "education_type": existing_s.get("education_type", "School"),
+            "roll_number": existing_s.get("roll_number", ""),
+            "academic_year": existing_s.get("academic_year", ""),
+            "enrollment_number": existing_s.get("enrollment_number", ""),
+            "college_name": existing_s.get("college_name", ""),
+            "semester": existing_s.get("semester", ""),
+            "admission_date": self.entry_adm_date.get().strip() or existing_s.get("admission_date", ""),
             "current_class": current_class,
             "section": section,
             "study_hours": study_hrs_val,
-            "photo_path": self.photo_path
+            "photo_path": self.photo_path or existing_s.get("photo_path", "")
         }
 
         try:
@@ -424,27 +414,22 @@ class StudentFormDialog(tk.Toplevel):
             return
 
         if ok:
-            # Save or update parent details in parents table in single submission
-            if father_name or mother_name or parent_phone or mother_phone or parent_email:
+            # If a parent record already exists for this student, update its contact details
+            existing_p = self.db.get_parent_by_student_id(sid)
+            if existing_p and (father_name or mother_name or parent_phone or mother_phone or parent_email):
                 parent_data = {
                     "student_id": sid,
-                    "name": father_name or mother_name or "Parent/Guardian",
-                    "mother_name": mother_name,
-                    "phone": parent_phone,
-                    "mother_phone": mother_phone,
-                    "email": parent_email,
-                    "occupation": parent_occ,
-                    "emergency_contact": emergency,
-                    "relationship": relation,
-                    "address": self.text_address.get("1.0", tk.END).strip()
+                    "name": father_name or mother_name or existing_p.get("name", "Parent/Guardian"),
+                    "mother_name": mother_name or existing_p.get("mother_name", ""),
+                    "phone": parent_phone or existing_p.get("phone", ""),
+                    "mother_phone": mother_phone or existing_p.get("mother_phone", ""),
+                    "email": parent_email or existing_p.get("email", ""),
+                    "occupation": parent_occ or existing_p.get("occupation", ""),
+                    "emergency_contact": emergency or existing_p.get("emergency_contact", ""),
+                    "relationship": relation or existing_p.get("relationship", "Parent"),
+                    "address": self.text_address.get("1.0", tk.END).strip() or existing_p.get("address", "")
                 }
-                existing_p = self.db.get_parent_by_student_id(sid)
-                if not existing_p:
-                    self.db.add_parent(parent_data)
-                else:
-                    self.db.update_parent(sid, parent_data)
-
-                self.db.auto_link_parent_account(sid, parent_phone, parent_email, mother_phone)
+                self.db.update_parent(sid, parent_data)
 
             messagebox.showinfo("Success", f"Student record for '{name}' ({sid}) saved successfully in a single submission!")
             if self.on_save:

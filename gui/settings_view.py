@@ -94,25 +94,39 @@ class SettingsViewFrame(ttk.Frame):
         timings_box.pack(fill=tk.X, pady=(0, 15))
 
         curr_timings = self.db.get_school_timings()
+        is_admin = self.role == "Admin"
+
+        def notify_protected_time(event=None):
+            if not is_admin:
+                messagebox.showwarning("Protected Timing", "You are not allowed to change this time. Only Admin can change the official school working time.")
 
         ttk.Label(timings_box, text="Official Start Time:", font=FONTS["body_bold"], style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=6)
         self.entry_start_time = ttk.Entry(timings_box, width=15)
         self.entry_start_time.insert(0, curr_timings["start_time"])
+        if not is_admin:
+            self.entry_start_time.config(state="readonly")
+            self.entry_start_time.bind("<Button-1>", notify_protected_time)
         self.entry_start_time.grid(row=0, column=1, sticky="w", pady=6, padx=10)
 
         ttk.Label(timings_box, text="Official End Time:", font=FONTS["body_bold"], style="Card.TLabel").grid(row=0, column=2, sticky="w", pady=6, padx=(15, 0))
         self.entry_end_time = ttk.Entry(timings_box, width=15)
         self.entry_end_time.insert(0, curr_timings["end_time"])
+        if not is_admin:
+            self.entry_end_time.config(state="readonly")
+            self.entry_end_time.bind("<Button-1>", notify_protected_time)
         self.entry_end_time.grid(row=0, column=3, sticky="w", pady=6, padx=10)
 
-        def save_timings():
-            st = self.entry_start_time.get().strip()
-            et = self.entry_end_time.get().strip()
-            if st and et:
-                self.db.update_school_timings(st, et)
-                messagebox.showinfo("Settings Saved", f"✓ School Official Timings updated:\nStart Time: {st}\nEnd Time: {et}")
+        if is_admin:
+            def save_timings():
+                st = self.entry_start_time.get().strip()
+                et = self.entry_end_time.get().strip()
+                if st and et:
+                    self.db.update_school_timings(st, et)
+                    messagebox.showinfo("Settings Saved", f"✓ School Official Timings updated:\nStart Time: {st}\nEnd Time: {et}")
 
-        ttk.Button(timings_box, text="💾 Save Timings", command=save_timings).grid(row=0, column=4, padx=15)
+            ttk.Button(timings_box, text="💾 Save Timings", command=save_timings).grid(row=0, column=4, padx=15)
+        else:
+            ttk.Button(timings_box, text="💾 Save Timings", command=notify_protected_time).grid(row=0, column=4, padx=15)
 
         # --- BOTTOM ACTIONS ---
         btn_bar = ttk.Frame(form)

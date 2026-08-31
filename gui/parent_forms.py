@@ -168,7 +168,7 @@ class ParentFormDialog(tk.Toplevel):
         }
 
         if self.is_edit:
-            ok = self.db.update_parent(pid_code, data)
+            ok = self.db.update_parent_by_id_code(pid_code, data)
         else:
             ok = self.db.add_parent(data)
 
